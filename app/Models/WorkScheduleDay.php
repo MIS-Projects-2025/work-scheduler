@@ -18,9 +18,13 @@ class WorkScheduleDay extends Model
         'schedule_code',
     ];
 
-
     public function schedule()
     {
         return $this->belongsTo(WorkSchedule::class, 'work_schedule_id');
+    }
+
+    public function shiftCode()
+    {
+        return $this->belongsTo(ShiftCode::class, 'schedule_code', 'shift_code_id');
     }
 }

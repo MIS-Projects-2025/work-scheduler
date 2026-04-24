@@ -1,11 +1,14 @@
 import AuthenticatedLayout from "@/Layouts/AuthenticatedLayout";
 import { Head } from "@inertiajs/react";
 import { useState, useEffect, useMemo } from "react";
-
 import * as XLSX from "xlsx";
 
 import { Button } from "@/components/ui/button";
 import { Combobox } from "@/components/ui/combobox";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
+import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
 
 import {
     FileSpreadsheet,
@@ -14,6 +17,7 @@ import {
     CheckCircle2,
     Upload,
     Save,
+    RotateCcw,
 } from "lucide-react";
 import ScheduleTableViewing from "./ScheduleTableViewing";
 
@@ -26,54 +30,43 @@ export default function WorkScheduleTemplate({
     const [isLoading, setIsLoading] = useState(false);
     const [downloadComplete, setDownloadComplete] = useState(false);
 
-    // STEP 3
     const [file, setFile] = useState(null);
-    const [rawRows, setRawRows] = useState([]);
     const [employeeData, setEmployeeData] = useState([]);
     const [employeeHeaders, setEmployeeHeaders] = useState([]);
     const [legendRows, setLegendRows] = useState([]);
     const [cutoffText, setCutoffText] = useState("");
     const [isSubmitting, setIsSubmitting] = useState(false);
 
-    // -----------------------------
-    // SHIFT CODE MAP (for styling)
-    // -----------------------------
+    // Shift map
     const shiftMap = useMemo(() => {
         const map = {};
         (shifts || []).forEach((s) => {
             let bgColor = s.shiftcode_bg_color;
             let fontColor = s.shiftcode_font_color;
-
-            if (bgColor && /^[0-9A-Fa-f]{6}$/.test(bgColor)) {
+            if (bgColor && /^[0-9A-Fa-f]{6}$/.test(bgColor))
                 bgColor = `#${bgColor}`;
-            }
-            if (fontColor && /^[0-9A-Fa-f]{6}$/.test(fontColor)) {
+            if (fontColor && /^[0-9A-Fa-f]{6}$/.test(fontColor))
                 fontColor = `#${fontColor}`;
-            }
-
-            bgColor = bgColor || "#FFFFFF";
-            fontColor = fontColor || "#000000";
-
             map[s.shiftcode] = {
-                bg: bgColor,
-                color: fontColor,
+                bg: bgColor || "#FFFFFF",
+                color: fontColor || "#000000",
             };
         });
         return map;
     }, [shifts]);
-    const shiftOptions = useMemo(() => {
-        return shifts.map((shift) => ({
-            value: shift.shiftcode,
-            label: `${shift.shiftcode} - ${shift.shiftcode_desc}`,
-        }));
-    }, [shifts]);
 
-    // -----------------------------
-    // CUTOFF OPTIONS
-    // -----------------------------
+    const shiftOptions = useMemo(
+        () =>
+            shifts.map((shift) => ({
+                value: shift.shiftcode,
+                label: `${shift.shiftcode} - ${shift.shiftcode_desc}`,
+            })),
+        [shifts],
+    );
+
+    // Cutoff options
     const cutoffOptions = useMemo(() => {
-        if (!cutoffList || !Array.isArray(cutoffList)) return [];
-
+        if (!Array.isArray(cutoffList)) return [];
         return cutoffList.map((c) => ({
             value: c.ID.toString(),
             label: `${c.payroll_date_start} → ${c.payroll_date_end}`,
@@ -81,29 +74,19 @@ export default function WorkScheduleTemplate({
     }, [cutoffList]);
 
     useEffect(() => {
-        if (cutoffOptions.length > 0) {
-            setSelectedCutoff(cutoffOptions[0].value);
-        }
+        if (cutoffOptions.length > 0) setSelectedCutoff(cutoffOptions[0].value);
     }, [cutoffOptions]);
 
-    // -----------------------------
-    // DOWNLOAD TEMPLATE
-    // -----------------------------
-    const handleDownload = async () => {
+    // Download template
+    const handleDownload = () => {
         if (!selectedCutoff) return;
-
         setIsLoading(true);
         setDownloadComplete(false);
-
-        const params = new URLSearchParams({
-            cutoff_id: selectedCutoff,
-        });
-
+        const params = new URLSearchParams({ cutoff_id: selectedCutoff });
         window.open(
             route("workschedule.template.download") + "?" + params.toString(),
             "_blank",
         );
-
         setTimeout(() => {
             setIsLoading(false);
             setDownloadComplete(true);
@@ -111,53 +94,38 @@ export default function WorkScheduleTemplate({
         }, 1000);
     };
 
-    // -----------------------------
-    // PARSE EXCEL
-    // -----------------------------
-    const handleFileChange = async (e) => {
-        const uploaded = e.target.files[0];
+    // Parse Excel
+    const parseFile = async (uploaded) => {
         if (!uploaded) return;
-
         setFile(uploaded);
 
         const buffer = await uploaded.arrayBuffer();
         const workbook = XLSX.read(buffer, { type: "array" });
-
         const sheet = workbook.Sheets[workbook.SheetNames[0]];
-        const json = XLSX.utils.sheet_to_json(sheet, {
-            header: 1,
-            defval: "",
-        });
-
-        setRawRows(json);
+        const json = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
 
         let legendStartRow = -1;
         let cutoffRow = -1;
-        let headerRow = -1;
         let dataStartRow = -1;
 
         for (let i = 0; i < json.length; i++) {
             const row = json[i];
-            if (!row || row.length === 0) continue;
+            if (!row?.length) continue;
+            const first = row[0] ? String(row[0]).toLowerCase() : "";
 
-            const firstCell = row[0] ? String(row[0]).toLowerCase() : "";
-
-            if (firstCell.includes("shift code legend")) {
+            if (first.includes("shift code legend")) {
                 legendStartRow = i;
                 continue;
             }
-
-            if (firstCell.includes("cutoff:")) {
+            if (first.includes("cutoff:")) {
                 cutoffRow = i;
                 setCutoffText(row[0]);
                 continue;
             }
-
             if (
                 row[0] === "Emp ID" ||
-                (row[0] && String(row[0]).includes("Emp ID"))
+                String(row[0] ?? "").includes("Emp ID")
             ) {
-                headerRow = i;
                 setEmployeeHeaders(row);
                 dataStartRow = i + 1;
                 break;
@@ -165,55 +133,46 @@ export default function WorkScheduleTemplate({
         }
 
         if (legendStartRow !== -1 && cutoffRow !== -1) {
-            const legendData = json.slice(legendStartRow, cutoffRow);
-            setLegendRows(legendData);
+            setLegendRows(json.slice(legendStartRow, cutoffRow));
         }
 
         if (dataStartRow !== -1) {
-            const data = json.slice(dataStartRow);
-            setEmployeeData(data);
+            setEmployeeData(json.slice(dataStartRow));
         }
     };
 
-    // -----------------------------
-    // HANDLE CELL EDIT
-    // -----------------------------
+    const handleFileChange = (e) => parseFile(e.target.files[0]);
+
     const handleCellEdit = (rowIndex, colIndex, newValue) => {
-        const updatedData = [...employeeData];
-        updatedData[rowIndex][colIndex] = newValue;
-        setEmployeeData(updatedData);
+        setEmployeeData((prev) => {
+            const updated = prev.map((r) => [...r]);
+            updated[rowIndex][colIndex] = newValue;
+            return updated;
+        });
     };
 
-    // -----------------------------
-    // HANDLE SUBMIT
-    // -----------------------------
+    const handleReset = () => {
+        if (file) parseFile(file);
+    };
+
     const handleSubmit = async () => {
         if (!selectedCutoff) {
             alert("Please select a cutoff period");
             return;
         }
-
         if (employeeData.length === 0) {
             alert("No data to submit");
             return;
         }
 
         setIsSubmitting(true);
-
         try {
-            // Prepare data for submission
             const submitData = {
                 cutoff_id: selectedCutoff,
                 headers: employeeHeaders,
                 data: employeeData,
             };
-
-            // Make API call to save the schedule
-            const response = await route(
-                "workschedule.template.submit",
-                submitData,
-            );
-
+            await route("workschedule.template.submit", submitData);
             alert("Schedule submitted successfully!");
         } catch (error) {
             console.error("Error submitting schedule:", error);
@@ -223,154 +182,186 @@ export default function WorkScheduleTemplate({
         }
     };
 
-    // Render legend
+    // Render legend from parsed Excel rows
     const renderLegend = () => {
-        if (legendRows.length === 0) return null;
-
+        if (!legendRows.length) return null;
         return (
-            <div className="mb-4 overflow-auto border rounded-lg bg-gray-50">
-                <table className="border-collapse text-sm w-full">
-                    <tbody>
+            <div className="rounded-md border bg-muted/30 overflow-auto mb-4">
+                <Table>
+                    <TableBody>
                         {legendRows.map((row, rowIdx) => {
-                            if (!row || row.every((cell) => !cell)) return null;
-
+                            if (!row?.length || row.every((c) => !c))
+                                return null;
                             return (
-                                <tr key={`legend-${rowIdx}`}>
+                                <TableRow key={`legend-${rowIdx}`}>
                                     {row.map((cell, colIdx) => {
                                         if (!cell) return null;
-
                                         const cellStr = String(cell).trim();
-                                        const isShiftCode =
-                                            /^[A-Z0-9]{3,8}$/i.test(cellStr);
                                         const style = shiftMap[cellStr];
-
+                                        const isCode =
+                                            /^[A-Z0-9]{3,8}$/i.test(cellStr) &&
+                                            !!style;
                                         return (
-                                            <td
+                                            <TableCell
                                                 key={`legend-${rowIdx}-${colIdx}`}
-                                                className="border p-2"
-                                                style={{
-                                                    backgroundColor: isShiftCode
-                                                        ? style?.bg || "#f9fafb"
-                                                        : "#f9fafb",
-                                                    color: isShiftCode
-                                                        ? style?.color ||
-                                                          "#000000"
-                                                        : "#000000",
-                                                    fontWeight: isShiftCode
-                                                        ? "bold"
-                                                        : "normal",
-                                                }}
+                                                className="border p-2 text-sm"
+                                                style={
+                                                    isCode
+                                                        ? {
+                                                              backgroundColor:
+                                                                  style.bg,
+                                                              color: style.color,
+                                                              fontWeight: 600,
+                                                          }
+                                                        : {}
+                                                }
                                             >
                                                 {cell}
-                                            </td>
+                                            </TableCell>
                                         );
                                     })}
-                                </tr>
+                                </TableRow>
                             );
                         })}
-                    </tbody>
-                </table>
+                    </TableBody>
+                </Table>
             </div>
         );
     };
+
+    const hasData = employeeData.length > 0;
 
     return (
         <AuthenticatedLayout>
             <Head title="Work Schedule Template" />
 
-            <div className="p-4 space-y-6">
-                {/* HEADER */}
+            <div className="p-6 space-y-6 bg-background min-h-screen">
+                {/* Header */}
                 <div>
-                    <h1 className="text-2xl font-bold flex items-center gap-2">
-                        <FileSpreadsheet className="w-6 h-6" />
+                    <h1 className="text-2xl font-bold flex items-center gap-2 text-foreground">
+                        <FileSpreadsheet className="w-6 h-6 text-primary" />
                         Work Schedule Template
                     </h1>
-                    <p className="text-muted-foreground">
-                        Download, upload, edit, and submit work schedule Excel
-                        file
+                    <p className="text-muted-foreground mt-1">
+                        Download, upload, edit, and submit your work schedule
+                        Excel file.
                     </p>
                 </div>
 
-                {/* STEP 1 & 2 - SIDE BY SIDE */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="border rounded-lg p-5">
-                        <h2 className="font-semibold mb-2">
-                            Step 1: Select Cutoff
-                        </h2>
-                        <Combobox
-                            options={cutoffOptions}
-                            value={selectedCutoff}
-                            onChange={setSelectedCutoff}
-                            placeholder="Select cutoff..."
-                        />
-                    </div>
+                <Separator />
 
-                    <div className="border rounded-lg p-5">
-                        <h2 className="font-semibold mb-3">
-                            Step 2: Download Template
-                        </h2>
-                        <Button
-                            onClick={handleDownload}
-                            disabled={!selectedCutoff || isLoading}
-                            className="w-full"
-                        >
-                            {isLoading ? (
-                                <>
-                                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                                    Preparing...
-                                </>
-                            ) : downloadComplete ? (
-                                <>
-                                    <CheckCircle2 className="w-4 h-4 mr-2" />
-                                    Download Started
-                                </>
-                            ) : (
-                                <>
-                                    <Download className="w-4 h-4 mr-2" />
-                                    Download Excel
-                                </>
-                            )}
-                        </Button>
-                    </div>
+                {/* Step 1 & 2 */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <Card>
+                        <CardHeader className="pb-3">
+                            <CardTitle className="text-base flex items-center gap-2">
+                                <Badge
+                                    variant="outline"
+                                    className="rounded-full w-6 h-6 p-0 flex items-center justify-center text-xs font-bold"
+                                >
+                                    1
+                                </Badge>
+                                Select Cutoff
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                            <Combobox
+                                options={cutoffOptions}
+                                value={selectedCutoff}
+                                onChange={setSelectedCutoff}
+                                placeholder="Select cutoff period…"
+                            />
+                        </CardContent>
+                    </Card>
+
+                    <Card>
+                        <CardHeader className="pb-3">
+                            <CardTitle className="text-base flex items-center gap-2">
+                                <Badge
+                                    variant="outline"
+                                    className="rounded-full w-6 h-6 p-0 flex items-center justify-center text-xs font-bold"
+                                >
+                                    2
+                                </Badge>
+                                Download Template
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                            <Button
+                                onClick={handleDownload}
+                                disabled={!selectedCutoff || isLoading}
+                                className="w-full"
+                                variant={
+                                    downloadComplete ? "secondary" : "default"
+                                }
+                            >
+                                {isLoading ? (
+                                    <>
+                                        <Loader2 className="w-4 h-4 animate-spin mr-2" />{" "}
+                                        Preparing…
+                                    </>
+                                ) : downloadComplete ? (
+                                    <>
+                                        <CheckCircle2 className="w-4 h-4 mr-2 text-green-600" />{" "}
+                                        Download Started
+                                    </>
+                                ) : (
+                                    <>
+                                        <Download className="w-4 h-4 mr-2" />{" "}
+                                        Download Excel
+                                    </>
+                                )}
+                            </Button>
+                        </CardContent>
+                    </Card>
                 </div>
 
-                {/* STEP 3 - UPLOAD & PREVIEW */}
-                <div className="border rounded-lg p-5">
-                    <h2 className="font-semibold mb-3">
-                        Step 3: Upload & Edit Schedule
-                    </h2>
-
-                    {/* UPLOAD */}
-                    <div className="border-2 border-dashed rounded-lg p-5 text-center mb-4">
-                        <Upload className="mx-auto mb-2 w-5 h-5" />
-                        <input
-                            type="file"
-                            accept=".xlsx,.xls"
-                            onChange={handleFileChange}
-                            className="text-sm"
-                        />
-                        {file && (
-                            <p className="text-xs mt-2 text-muted-foreground">
-                                {file.name}
-                            </p>
-                        )}
-                    </div>
-
-                    {/* PREVIEW & EDIT */}
-                    {employeeData.length > 0 && (
-                        <div className="mt-4">
-                            {/* Cutoff Header */}
-                            {cutoffText && (
-                                <div className="mb-3 p-3 bg-blue-50 border rounded-lg text-center font-semibold">
-                                    {cutoffText}
-                                </div>
+                {/* Step 3 */}
+                <Card>
+                    <CardHeader className="pb-3">
+                        <CardTitle className="text-base flex items-center gap-2">
+                            <Badge
+                                variant="outline"
+                                className="rounded-full w-6 h-6 p-0 flex items-center justify-center text-xs font-bold"
+                            >
+                                3
+                            </Badge>
+                            Upload &amp; Edit Schedule
+                        </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                        {/* Upload zone */}
+                        <label className="flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-border bg-muted/20 p-6 text-center cursor-pointer hover:bg-muted/40 transition-colors">
+                            <Upload className="w-6 h-6 text-muted-foreground" />
+                            <span className="text-sm text-muted-foreground">
+                                Click to upload an Excel file (.xlsx / .xls)
+                            </span>
+                            <input
+                                type="file"
+                                accept=".xlsx,.xls"
+                                onChange={handleFileChange}
+                                className="hidden"
+                            />
+                            {file && (
+                                <Badge variant="secondary" className="mt-1">
+                                    {file.name}
+                                </Badge>
                             )}
+                        </label>
 
-                            {/* Legend Section */}
-                            {renderLegend()}
+                        {hasData && (
+                            <div className="space-y-4">
+                                {/* Cutoff label */}
+                                {cutoffText && (
+                                    <div className="rounded-md border bg-primary/5 px-4 py-2.5 text-center text-sm font-semibold text-primary">
+                                        {cutoffText}
+                                    </div>
+                                )}
 
-                            {/* Editable Data Table */}
-                            <div className="mb-4">
+                                {/* Legend */}
+                                {renderLegend()}
+
+                                {/* Editable table */}
                                 <ScheduleTableViewing
                                     data={employeeData}
                                     headers={employeeHeaders}
@@ -382,42 +373,38 @@ export default function WorkScheduleTemplate({
                                     editable={true}
                                     onCellChange={handleCellEdit}
                                 />
-                            </div>
 
-                            {/* Submit Button */}
-                            <div className="flex justify-end gap-3 mt-4">
-                                <Button
-                                    variant="outline"
-                                    onClick={() => {
-                                        // Reset to original data
-                                        handleFileChange({
-                                            target: { files: [file] },
-                                        });
-                                    }}
-                                >
-                                    Reset
-                                </Button>
-                                <Button
-                                    onClick={handleSubmit}
-                                    disabled={isSubmitting}
-                                    className="bg-green-600 hover:bg-green-700"
-                                >
-                                    {isSubmitting ? (
-                                        <>
-                                            <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                                            Submitting...
-                                        </>
-                                    ) : (
-                                        <>
-                                            <Save className="w-4 h-4 mr-2" />
-                                            Submit Schedule
-                                        </>
-                                    )}
-                                </Button>
+                                {/* Actions */}
+                                <div className="flex justify-end gap-3 pt-2">
+                                    <Button
+                                        variant="outline"
+                                        onClick={handleReset}
+                                    >
+                                        <RotateCcw className="w-4 h-4 mr-2" />
+                                        Reset
+                                    </Button>
+                                    <Button
+                                        onClick={handleSubmit}
+                                        disabled={isSubmitting}
+                                        className="bg-green-600 hover:bg-green-700 text-white"
+                                    >
+                                        {isSubmitting ? (
+                                            <>
+                                                <Loader2 className="w-4 h-4 animate-spin mr-2" />{" "}
+                                                Submitting…
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Save className="w-4 h-4 mr-2" />{" "}
+                                                Submit Schedule
+                                            </>
+                                        )}
+                                    </Button>
+                                </div>
                             </div>
-                        </div>
-                    )}
-                </div>
+                        )}
+                    </CardContent>
+                </Card>
             </div>
         </AuthenticatedLayout>
     );

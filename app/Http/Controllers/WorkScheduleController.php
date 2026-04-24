@@ -5,9 +5,12 @@ namespace App\Http\Controllers;
 use App\Exports\WorkScheduleTemplateExport;
 use App\Models\PayrollCutoffSchedule;
 use App\Models\ShiftCode;
+use App\Models\WorkSchedule;
+use App\Models\WorkScheduleDay;
 use App\Services\HrisApiService;
 use Maatwebsite\Excel\Facades\Excel;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class WorkScheduleController extends Controller
 {
@@ -126,6 +129,96 @@ class WorkScheduleController extends Controller
         return response()->json([
             'cutoff' => $cutoff,
             'days' => $days,
+        ]);
+    }
+
+    public function viewSchedules(Request $request)
+    {
+        $empId = session('emp_data.emp_id');
+        $hris = new HrisApiService();
+        $managerWorkDetails = $hris->fetchWorkDetails($empId);
+        $managerProdLine = $managerWorkDetails['prod_line'] ?? null;
+
+        $dateStart = '2025-10-22';
+        $dateEnd = '2025-11-06';
+
+        $shiftCodes = $this->getFilteredShiftCodes($managerProdLine);
+
+        $schedules = WorkSchedule::where('payroll_date_start', $dateStart)
+            ->where('payroll_date_end', $dateEnd)
+            ->where('created_by', $empId)
+            ->with(['days.shiftCode'])
+            ->orderBy('emp_id')
+            ->get();
+
+        $employeeIds = $schedules->pluck('emp_id')->toArray();
+        $employees = $hris->fetchEmployeesBulk($employeeIds);
+
+        $workDetailsMap = [];
+        foreach ($employeeIds as $empId) {
+            $workDetailsMap[$empId] = $hris->fetchWorkDetails($empId);
+        }
+
+        $daysInPeriod = [];
+        $current = strtotime($dateStart);
+        $endTimestamp = strtotime($dateEnd);
+        while ($current <= $endTimestamp) {
+            $daysInPeriod[] = date('Y-m-d', $current);
+            $current = strtotime('+1 day', $current);
+        }
+
+        $staticHeaders = ['Emp ID', 'Employee Name', 'Department', 'Production Line', 'Team', 'Shift Type'];
+        $dayHeaders = [];
+        foreach ($daysInPeriod as $date) {
+            $dayObj = new \DateTime($date);
+            $dayHeaders[] = $dayObj->format('d-M') . ' ' . strtoupper(substr($dayObj->format('l'), 0, 3));
+        }
+
+        $headers = array_merge($staticHeaders, $dayHeaders);
+
+        $groupedData = [];
+
+        $schedulesData = $schedules->map(function ($schedule) use ($employees, $workDetailsMap, $daysInPeriod) {
+            $daysMap = [];
+            foreach ($schedule->days as $day) {
+                $scheduleCode = $day->shiftCode;
+                $codeValue = $scheduleCode ? $scheduleCode->shiftcode : '';
+                $daysMap[$day->work_date] = $codeValue;
+            }
+
+            $empData = $employees[$schedule->emp_id] ?? [];
+            $workData = $workDetailsMap[$schedule->emp_id] ?? [];
+
+            $row = [
+                $schedule->emp_id,
+                $empData['emp_name'] ?? '',
+                $empData['department'] ?? '',
+                $empData['prodline'] ?? '',
+                $workData['team'] ?? '',
+                $workData['shift_type'] ?? '',
+            ];
+
+            foreach ($daysInPeriod as $date) {
+                $row[] = $daysMap[$date] ?? '';
+            }
+
+            return $row;
+        })->values()->all();
+
+        $groupedData[] = [
+            'created_by' => $empId,
+            'payroll_date_start' => $dateStart,
+            'payroll_date_end' => $dateEnd,
+            'headers' => $headers,
+            'staticHeaders' => $staticHeaders,
+            'schedules' => $schedulesData,
+        ];
+
+        return inertia('WorkSchedule/View', [
+            'groupedData' => $groupedData,
+            'shiftCodes' => $shiftCodes,
+            'dateStart' => $dateStart,
+            'dateEnd' => $dateEnd,
         ]);
     }
 }
