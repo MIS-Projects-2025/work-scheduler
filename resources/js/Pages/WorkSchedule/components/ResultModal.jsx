@@ -24,6 +24,11 @@ export default function ResultModal({ open, onClose, result }) {
             className: "bg-blue-50 dark:bg-blue-950",
         },
         {
+            key: "blocked",
+            label: "Blocked",
+            className: "bg-red-50 dark:bg-red-950",
+        },
+        {
             key: "skipped",
             label: "Skipped",
             className: "bg-yellow-50 dark:bg-yellow-950",
@@ -31,9 +36,23 @@ export default function ResultModal({ open, onClose, result }) {
         {
             key: "unauthorized",
             label: "Unauthorized",
+            className: "bg-red-100 dark:bg-red-900",
+        },
+        {
+            key: "errors",
+            label: "Errors",
             className: "bg-red-50 dark:bg-red-950",
         },
     ];
+
+    const formatItems = (items) => {
+        if (!items) return [];
+
+        return items.map((item) => {
+            if (typeof item === "string") return item;
+            return item.empId ?? "Unknown";
+        });
+    };
 
     return (
         <Dialog open={open} onOpenChange={onClose}>
@@ -52,21 +71,44 @@ export default function ResultModal({ open, onClose, result }) {
                 </DialogHeader>
 
                 <div className="space-y-3">
-                    {sections.map(({ key, label, className }) =>
-                        result[key]?.length > 0 ? (
+                    {sections.map(({ key, label, className }) => {
+                        const items = result[key] || [];
+
+                        if (items.length === 0) return null;
+
+                        return (
                             <div
                                 key={key}
                                 className={`p-3 rounded-md ${className}`}
                             >
                                 <strong>
-                                    {label} ({result[key].length}):
+                                    {label} ({items.length}):
                                 </strong>
-                                <p className="text-sm">
-                                    {result[key].join(", ")}
-                                </p>
+
+                                {/* ✅ COMMA SEPARATED OUTPUT */}
+                                <div className="text-sm mt-1">
+                                    {formatItems(items).join(", ")}
+                                </div>
+
+                                {/* Optional reason display for blocked/errors */}
+                                {items.some(
+                                    (i) => typeof i === "object" && i.reason,
+                                ) && (
+                                    <div className="mt-2 text-xs text-muted-foreground space-y-1">
+                                        {items.map((item, index) =>
+                                            typeof item === "object" &&
+                                            item.reason ? (
+                                                <div key={index}>
+                                                    {item.empId} — {item.reason}
+                                                </div>
+                                            ) : null,
+                                        )}
+                                    </div>
+                                )}
                             </div>
-                        ) : null,
-                    )}
+                        );
+                    })}
+
                     {result.error && (
                         <Alert variant="destructive">
                             <AlertDescription>{result.error}</AlertDescription>

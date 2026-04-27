@@ -16,7 +16,10 @@ export const validateSchedules = (
     let isValid = true;
 
     const totalDays = getPayrollPeriodDays(cutoffStart, cutoffEnd);
-    const scheduleStartCol = 6;
+
+    // UPDATED: Now 8 static columns (Emp ID, Name, Dept, Prod Line, Team, Shift Type, Supervisor ID, Approver2 ID)
+    const STATIC_COLUMNS = 8;
+    const scheduleStartCol = STATIC_COLUMNS;
     const actualDayCols = headers.length - scheduleStartCol;
     const expectedDays = Math.min(totalDays, actualDayCols);
 
@@ -42,7 +45,10 @@ export const validateSchedules = (
 
     // 2. Unauthorized employees
     const authorizedIds = employeeList.map(
-        (e) => e.EMPLOYID?.toString() || e.emp_id?.toString(),
+        (e) =>
+            e.EMPLOYID?.toString() ||
+            e.emp_id?.toString() ||
+            e.employid?.toString(),
     );
     const unauthorized = employeeRows
         .filter((row) => row[0] && !authorizedIds.includes(row[0].toString()))
@@ -63,14 +69,22 @@ export const validateSchedules = (
     employeeRows.forEach((row, index) => {
         const empId = row[0]?.toString();
         const empName = row[1] || empId || "Unknown";
-        const schedule = buildScheduleFromRow(row, headers, expectedDays);
+        // Pass the STATIC_COLUMNS parameter to buildScheduleFromRow
+        const schedule = buildScheduleFromRow(
+            row,
+            headers,
+            expectedDays,
+            STATIC_COLUMNS,
+        );
         const scheduledDays = Object.keys(schedule).length;
         const rowErrors = [];
 
         // Invalid shift codes
         const invalidCodes = [
             ...new Set(
-                Object.values(schedule).filter((code) => !shiftMap[code]),
+                Object.values(schedule).filter(
+                    (code) => code && !shiftMap[code],
+                ),
             ),
         ];
         if (invalidCodes.length > 0) {

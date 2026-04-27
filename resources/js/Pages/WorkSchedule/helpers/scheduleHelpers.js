@@ -6,9 +6,15 @@ export const getPayrollPeriodDays = (startDate, endDate) => {
     return Math.round((end - start) / (1000 * 60 * 60 * 24)) + 1;
 };
 
-export const buildScheduleFromRow = (row, headers, totalDays) => {
+export const buildScheduleFromRow = (
+    row,
+    headers,
+    totalDays,
+    staticColumns = 8,
+) => {
     const schedule = {};
-    const scheduleStartCol = 6;
+    // Use the provided staticColumns parameter (default 8 for the new structure)
+    const scheduleStartCol = staticColumns;
     const availableDayCols = headers.length - scheduleStartCol;
     const daysToProcess = Math.min(totalDays, availableDayCols);
 

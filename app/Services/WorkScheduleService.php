@@ -2,10 +2,12 @@
 
 namespace App\Services;
 
+use App\Models\PayrollCutoffSchedule;
 use App\Models\WorkSchedule;
 use App\Repositories\WorkScheduleRepository;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Log;
 
 class WorkScheduleService
 {
@@ -120,7 +122,186 @@ class WorkScheduleService
 
         return $this->nameCache[$creatorId];
     }
+    /**
+     * Submit schedules from template
+     */
+    public function submitSchedules(array $data, string $createdBy): array
+    {
+        $cutoff = $this->getCutoffById((int) $data['cutoff_id']);
+        if (!$cutoff) {
+            return [
+                'status' => 'error',
+                'error' => 'Invalid cutoff period'
+            ];
+        }
 
+        $dateStart = $cutoff->payroll_date_start;
+        $dateEnd = $cutoff->payroll_date_end;
+
+        $saved = [];
+        $errors = [];
+        $overwritten = [];
+        $blocked = [];
+
+        foreach ($data['employees'] as $employeeData) {
+            try {
+                $empId = $employeeData['empId'];
+                $supervisorId = $employeeData['supervisorId'] ?? $createdBy;
+                $approver2Id = $employeeData['approver2Id'] ?? null;
+
+                $existingSchedule = $this->repo->findScheduleByEmployeeAndCutoff(
+                    $empId,
+                    $dateStart,
+                    $dateEnd
+                );
+
+                /**
+                 * =========================================
+                 * CASE 1: EXISTING SCHEDULE
+                 * =========================================
+                 */
+                if ($existingSchedule) {
+
+                    $status = (int) $existingSchedule->work_sched_status;
+
+                    // ❌ BLOCK IF NOT DRAFT (STATUS != 1)
+                    if ($status !== 1) {
+
+                        $statusLabel = match ($status) {
+                            2 => 'Approved',
+                            3 => 'Aknowledged',
+                            4 => 'Disapproved',
+                            default => 'Locked'
+                        };
+
+                        $blocked[] = [
+                            'empId' => $empId,
+                            'status' => $status,
+                            'reason' => "{$statusLabel} schedule cannot be overwritten"
+                        ];
+
+                        continue;
+                    }
+
+                    // ✅ OVERWRITE ONLY IF STATUS = 1
+                    $scheduleDays = $this->buildScheduleDaysData(
+                        $existingSchedule->id,
+                        $employeeData['schedule'],
+                        $dateStart
+                    );
+
+                    $this->repo->updateScheduleWithDays(
+                        $existingSchedule,
+                        [
+                            'supervisor_id' => $supervisorId,
+                            'approver2_id' => $approver2Id,
+                            'date_updated' => now(),
+                        ],
+                        $scheduleDays
+                    );
+
+                    $overwritten[] = $empId;
+                }
+
+                /**
+                 * =========================================
+                 * CASE 2: NEW SCHEDULE
+                 * =========================================
+                 */
+                else {
+                    $scheduleDays = $this->buildScheduleDaysData(
+                        null,
+                        $employeeData['schedule'],
+                        $dateStart
+                    );
+
+                    $this->repo->createScheduleWithDays([
+                        'emp_id' => $empId,
+                        'payroll_date_start' => $dateStart,
+                        'payroll_date_end' => $dateEnd,
+                        'work_sched_status' => WorkSchedule::STATUS_PENDING_APPROVAL,
+                        'supervisor_id' => $supervisorId,
+                        'approver2_id' => $approver2Id,
+                        'created_by' => $createdBy,
+                        'date_created' => now(),
+                    ], $scheduleDays);
+                }
+
+                $saved[] = $empId;
+            } catch (\Exception $e) {
+                Log::error("Failed to save schedule for employee {$employeeData['empId']}: " . $e->getMessage());
+
+                $errors[] = [
+                    'empId' => $employeeData['empId'],
+                    'error' => $e->getMessage()
+                ];
+            }
+        }
+
+        /**
+         * =========================================
+         * RESPONSE BUILDING
+         * =========================================
+         */
+        $response = [
+            'status' => 'success',
+            'saved' => $saved,
+            'message' => count($saved) . ' schedules submitted successfully'
+        ];
+
+        if (!empty($overwritten)) {
+            $response['overwritten'] = $overwritten;
+            $response['message'] = count($saved) . ' saved (' . count($overwritten) . ' overwritten)';
+        }
+
+        if (!empty($blocked)) {
+            $response['blocked'] = $blocked;
+            $response['status'] = 'warning';
+            $response['message'] = count($saved) . ' saved, ' . count($blocked) . ' blocked (approved schedules cannot be overwritten)';
+        }
+
+        if (!empty($errors)) {
+            $response['errors'] = $errors;
+            $response['status'] = 'warning';
+            $response['message'] = count($saved) . ' saved, ' . count($errors) . ' failed';
+        }
+
+        return $response;
+    }
+
+    /**
+     * Build schedule days data array
+     */
+    private function buildScheduleDaysData(?int $workScheduleId, array $schedule, string $dateStart): array
+    {
+        $daysToCreate = [];
+        foreach ($schedule as $dayNumber => $shiftCodeId) {
+            $daysToAdd = (int) $dayNumber - 1;
+            $workDate = date('Y-m-d', strtotime($dateStart . " +{$daysToAdd} days"));
+
+            $dayData = [
+                'work_date' => $workDate,
+                'schedule_code' => $shiftCodeId,
+            ];
+
+            if ($workScheduleId) {
+                $dayData['work_schedule_id'] = $workScheduleId;
+            }
+
+            $daysToCreate[] = $dayData;
+        }
+
+        return $daysToCreate;
+    }
+
+
+    /**
+     * Get cutoff by ID
+     */
+    public function getCutoffById(int $cutoffId): ?PayrollCutoffSchedule
+    {
+        return $this->repo->findCutoff($cutoffId);
+    }
     // -------------------------------------------------------------------------
     // View / detail page
     // -------------------------------------------------------------------------

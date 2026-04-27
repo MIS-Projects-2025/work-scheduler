@@ -118,7 +118,34 @@ class WorkScheduleController extends Controller
             $ctx['filename']
         );
     }
+    /**
+     * Submit the filled template
+     */
+    public function submitTemplate(Request $request)
+    {
+        try {
+            $validated = $request->validate([
+                'employees' => 'required|array',
+                'employees.*.empId' => 'required|string',
+                'employees.*.schedule' => 'required|array',
+                'employees.*.supervisorId' => 'nullable|string',
+                'employees.*.approver2Id' => 'nullable|string',
+                'cutoff_id' => 'required|integer|exists:payroll_cutoff_schedule,ID',
+            ]);
 
+            $result = $this->service->submitSchedules($validated, session('emp_data.emp_id'));
+
+
+            return response()->json($result);
+        } catch (\Exception $e) {
+            Log::error("Failed to submit schedules: " . $e->getMessage());
+
+            return response()->json([
+                'status' => 'error',
+                'error' => 'Failed to save schedules: ' . $e->getMessage()
+            ], 500);
+        }
+    }
     // -------------------------------------------------------------------------
     // View / detail
     // -------------------------------------------------------------------------

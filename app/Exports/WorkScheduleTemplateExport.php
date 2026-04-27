@@ -125,7 +125,8 @@ class EmployeeListSheet implements FromCollection, ShouldAutoSize, WithEvents
     private array $days;
     private ?string $managerProdLine;
 
-    private const INFO_COLS = 6;
+    // Now we have 8 info columns: Emp ID, Employee Name, Department, Production Line, Team, Shift Type, Supervisor ID, Approver2 ID
+    private const INFO_COLS = 8;
 
     public function __construct(int $cutoffId, array $employeeIds, HrisApiService $hris, $shiftCodes, array $days, ?string $managerProdLine = null)
     {
@@ -146,12 +147,12 @@ class EmployeeListSheet implements FromCollection, ShouldAutoSize, WithEvents
     {
         return [
             AfterSheet::class => function (AfterSheet $event) {
-
                 $sheet = $event->sheet->getDelegate();
                 $daysCount = count($this->days);
 
-                $sheet->mergeCells('A1:F1');
-
+                // MERGE the info columns for the legend note
+                // Instead of A1:F1, now A1:? (up to H1, but we want a single merged "SHIFT CODE LEGEND")
+                $sheet->mergeCells('A1:H1');
                 $sheet->setCellValue('A1', 'SHIFT CODE LEGEND');
 
                 $sheet->getStyle('A1')->applyFromArray([
@@ -162,7 +163,7 @@ class EmployeeListSheet implements FromCollection, ShouldAutoSize, WithEvents
                     ],
                     'fill' => [
                         'fillType' => Fill::FILL_SOLID,
-                        'startColor' => ['rgb' => '4472C4'], // same as header
+                        'startColor' => ['rgb' => '4472C4'],
                     ],
                     'alignment' => [
                         'horizontal' => Alignment::HORIZONTAL_CENTER,
@@ -172,11 +173,10 @@ class EmployeeListSheet implements FromCollection, ShouldAutoSize, WithEvents
 
                 $codes = $this->shiftCodes->filter(fn($c) => !empty($c->shiftcode))->values();
 
-                $codesPerRow = 3; // 👉 3 codes per row
-                $colsPerCode = 2; // 👉 each code uses 2 columns (code + desc)
+                $codesPerRow = floor(8 / 2); // 2 columns per code (code + desc) → max 4 codes per row with 8 columns
+                $colsPerCode = 2;
 
                 foreach ($codes as $index => $code) {
-
                     $row = 2 + intdiv($index, $codesPerRow);
                     $colIndex = ($index % $codesPerRow) * $colsPerCode;
 
@@ -209,7 +209,6 @@ class EmployeeListSheet implements FromCollection, ShouldAutoSize, WithEvents
                         ]
                     ];
 
-                    // Apply style to both cells
                     $sheet->getStyle("{$codeCol}{$row}")->applyFromArray(
                         array_merge($style, [
                             'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER]
@@ -229,12 +228,12 @@ class EmployeeListSheet implements FromCollection, ShouldAutoSize, WithEvents
 
                 // spacing row after legend
                 $sepRow = $legendEndRow + 2;
+
                 // ---- CUTOFF HEADER ----
                 $cutoffStart = date('M d, Y', strtotime($this->days[0]));
                 $cutoffEnd   = date('M d, Y', strtotime(end($this->days)));
 
                 $cutoffRow = $sepRow;
-
                 $lastCol = $this->colLetter(self::INFO_COLS + $daysCount - 1);
 
                 $sheet->mergeCells("A{$cutoffRow}:{$lastCol}{$cutoffRow}");
@@ -252,7 +251,17 @@ class EmployeeListSheet implements FromCollection, ShouldAutoSize, WithEvents
                 $dateHeaderRow = $cutoffRow + 1;
                 $dayHeaderRow  = $dateHeaderRow + 1;
 
-                $staticHeaders = ['Emp ID', 'Employee Name', 'Department', 'Production Line', 'Team', 'Shift Type'];
+                // Updated static headers including the new hidden columns
+                $staticHeaders = [
+                    'Emp ID',
+                    'Employee Name',
+                    'Department',
+                    'Production Line',
+                    'Team',
+                    'Shift Type',
+                    'Supervisor ID',  // Hidden column
+                    'Approver2 ID'    // Hidden column
+                ];
 
                 foreach ($staticHeaders as $ci => $h) {
                     $col = $this->colLetter($ci);
@@ -262,7 +271,6 @@ class EmployeeListSheet implements FromCollection, ShouldAutoSize, WithEvents
 
                 foreach ($this->days as $i => $day) {
                     $col = $this->colLetter(self::INFO_COLS + $i);
-
                     $sheet->setCellValue("{$col}{$dateHeaderRow}", date('d-M', strtotime($day)));
                     $sheet->setCellValue("{$col}{$dayHeaderRow}", date('D', strtotime($day)));
                 }
@@ -277,6 +285,10 @@ class EmployeeListSheet implements FromCollection, ShouldAutoSize, WithEvents
                     ],
                 ]);
 
+                // Hide the Supervisor ID and Approver2 ID columns (columns G and H)
+                $sheet->getColumnDimension('G')->setVisible(false);  // Supervisor ID
+                $sheet->getColumnDimension('H')->setVisible(false);  // Approver2 ID
+
                 // ---- DATA ----
                 $dataStartRow = $dayHeaderRow + 1;
                 $row = $dataStartRow;
@@ -284,9 +296,33 @@ class EmployeeListSheet implements FromCollection, ShouldAutoSize, WithEvents
                 if (!empty($this->employeeIds)) {
                     $employees = $this->hris->fetchEmployeesBulk($this->employeeIds);
 
+                    // Fetch approvers for each employee if needed
+                    $approversCache = [];
+
                     foreach ($this->employeeIds as $empId) {
                         $emp  = $employees[$empId] ?? [];
-                        $work = $this->hris->fetchWorkDetails($empId);
+                        $work = $this->hris->fetchWorkDetails((int)$empId);
+
+                        // Get supervisor_id and approver2_id for this employee
+                        // You can get this from your direct reports data or HRIS
+                        $supervisorId = $work['supervisor_id'] ?? null;
+                        $approver2Id = null;
+
+                        // Fetch approvers if not cached
+                        if (!isset($approversCache[$empId])) {
+                            $approvers = $this->hris->fetchApprovers((int)$empId);
+                            if ($approvers) {
+                                $supervisorId = $approvers['approver1_id'] ?? $supervisorId;
+                                $approver2Id = $approvers['approver2_id'] ?? null;
+                            }
+                            $approversCache[$empId] = [
+                                'supervisor_id' => $supervisorId,
+                                'approver2_id' => $approver2Id
+                            ];
+                        } else {
+                            $supervisorId = $approversCache[$empId]['supervisor_id'];
+                            $approver2Id = $approversCache[$empId]['approver2_id'];
+                        }
 
                         $sheet->setCellValue("A{$row}", $empId);
                         $sheet->setCellValue("B{$row}", $emp['emp_name'] ?? '');
@@ -294,13 +330,17 @@ class EmployeeListSheet implements FromCollection, ShouldAutoSize, WithEvents
                         $sheet->setCellValue("D{$row}", $emp['prodline'] ?? '');
                         $sheet->setCellValue("E{$row}", $work['team'] ?? '');
                         $sheet->setCellValue("F{$row}", $work['shift_type'] ?? '');
+                        $sheet->setCellValue("G{$row}", $supervisorId ?? '');     // Hidden
+                        $sheet->setCellValue("H{$row}", $approver2Id ?? '');       // Hidden
 
                         $row++;
                     }
                 }
 
                 // ---- FREEZE ----
-                $sheet->freezePane('G' . $dataStartRow);
+                // Freeze from column I (which is column index 8, since A-H are 0-7)
+                $freezeColumn = $this->colLetter(self::INFO_COLS);
+                $sheet->freezePane($freezeColumn . $dataStartRow);
 
                 // ---- WIDTHS ----
                 $sheet->getColumnDimension('A')->setWidth(12);
@@ -309,11 +349,13 @@ class EmployeeListSheet implements FromCollection, ShouldAutoSize, WithEvents
                 $sheet->getColumnDimension('D')->setWidth(18);
                 $sheet->getColumnDimension('E')->setWidth(14);
                 $sheet->getColumnDimension('F')->setWidth(14);
+                $sheet->getColumnDimension('G')->setWidth(12);
+                $sheet->getColumnDimension('H')->setWidth(12);
 
                 for ($i = 0; $i < $daysCount; $i++) {
                     $sheet->getColumnDimension($this->colLetter(self::INFO_COLS + $i))->setWidth(10);
                 }
-            }
+            },
         ];
     }
 

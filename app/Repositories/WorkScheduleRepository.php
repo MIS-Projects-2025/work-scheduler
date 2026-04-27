@@ -5,8 +5,10 @@ namespace App\Repositories;
 use App\Models\PayrollCutoffSchedule;
 use App\Models\ShiftCode;
 use App\Models\WorkSchedule;
+use App\Models\WorkScheduleDay;
 use Illuminate\Support\Collection;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Facades\DB;
 
 class WorkScheduleRepository
 {
@@ -159,6 +161,91 @@ class WorkScheduleRepository
         }
 
         return $counts;
+    }
+    /**
+     * Find schedule by employee and cutoff period
+     */
+    public function findScheduleByEmployeeAndCutoff(string $empId, string $dateStart, string $dateEnd): ?WorkSchedule
+    {
+        return WorkSchedule::where('emp_id', $empId)
+            ->where('payroll_date_start', $dateStart)
+            ->where('payroll_date_end', $dateEnd)
+            ->first();
+    }
+
+    /**
+     * Create a new work schedule with its days (using DB transaction)
+     */
+    public function createScheduleWithDays(array $scheduleData, array $daysData): WorkSchedule
+    {
+        return DB::transaction(function () use ($scheduleData, $daysData) {
+            $schedule = WorkSchedule::create($scheduleData);
+
+            // Add work_schedule_id to each day
+            foreach ($daysData as &$day) {
+                $day['work_schedule_id'] = $schedule->id;
+            }
+
+            WorkScheduleDay::insert($daysData);
+
+            return $schedule;
+        });
+    }
+
+    /**
+     * Update an existing work schedule with its days (using DB transaction)
+     */
+    public function updateScheduleWithDays(WorkSchedule $schedule, array $scheduleData, array $daysData): WorkSchedule
+    {
+        return DB::transaction(function () use ($schedule, $scheduleData, $daysData) {
+            // Update the schedule
+            $schedule->update($scheduleData);
+
+            // Delete existing days
+            WorkScheduleDay::where('work_schedule_id', $schedule->id)->delete();
+
+            // Add work_schedule_id to each day
+            foreach ($daysData as &$day) {
+                $day['work_schedule_id'] = $schedule->id;
+            }
+
+            // Insert new days
+            WorkScheduleDay::insert($daysData);
+
+            return $schedule->fresh();
+        });
+    }
+
+    /**
+     * Create a new work schedule (without transaction - use for single operations)
+     */
+    public function createSchedule(array $data): WorkSchedule
+    {
+        return WorkSchedule::create($data);
+    }
+
+    /**
+     * Create schedule days (without transaction)
+     */
+    public function createScheduleDays(array $days): void
+    {
+        WorkScheduleDay::insert($days);
+    }
+
+    /**
+     * Delete schedule days
+     */
+    public function deleteScheduleDays(int $workScheduleId): void
+    {
+        WorkScheduleDay::where('work_schedule_id', $workScheduleId)->delete();
+    }
+
+    /**
+     * Update schedule (without transaction)
+     */
+    public function updateSchedule(WorkSchedule $schedule, array $data): bool
+    {
+        return $schedule->update($data);
     }
 
     // -------------------------------------------------------------------------

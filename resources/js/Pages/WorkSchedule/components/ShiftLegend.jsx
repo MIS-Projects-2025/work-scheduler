@@ -71,13 +71,31 @@ export default function ShiftLegend({ shifts, shiftMap, collapsed, onToggle }) {
                                                             color: style.color,
                                                         }}
                                                     >
-                                                        {code.shiftcode}
+                                                        <div>
+                                                            {code.shiftcode}
+                                                        </div>
+                                                        <div className="text-xs font-normal opacity-75 mt-0.5">
+                                                            {code.shiftcode_desc?.substring(
+                                                                0,
+                                                                30,
+                                                            )}
+                                                            {code.shiftcode_desc
+                                                                ?.length > 30
+                                                                ? "..."
+                                                                : ""}
+                                                        </div>
                                                     </TableCell>
                                                 </TooltipTrigger>
-                                                <TooltipContent>
+                                                <TooltipContent
+                                                    side="top"
+                                                    className="max-w-xs"
+                                                >
                                                     <p className="text-xs">
-                                                        {style.desc ||
-                                                            code.shiftcode_desc}
+                                                        <span className="font-semibold">
+                                                            {code.shiftcode}
+                                                        </span>
+                                                        <br />
+                                                        {code.shiftcode_desc}
                                                     </p>
                                                 </TooltipContent>
                                             </Tooltip>

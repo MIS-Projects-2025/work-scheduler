@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { validateSchedules } from "../helpers/scheduleValidation";
@@ -6,6 +6,7 @@ import {
     buildScheduleFromRow,
     getPayrollPeriodDays,
 } from "../helpers/scheduleHelpers";
+import { router } from "@inertiajs/react";
 
 export function useWorkSchedule({
     cutoffList,
@@ -41,7 +42,7 @@ export function useWorkSchedule({
             if (fontColor && /^[0-9A-Fa-f]{6}$/.test(fontColor))
                 fontColor = `#${fontColor}`;
             map[s.shiftcode] = {
-                id: s.id,
+                id: s.shift_code_id,
                 bg: bgColor || "#FFFFFF",
                 color: fontColor || "#000000",
                 desc: s.shiftcode_desc || "",
@@ -79,11 +80,15 @@ export function useWorkSchedule({
     }, [cutoffList]);
 
     useEffect(() => {
-        if (cutoffOptions.length > 0) {
-            setSelectedCutoff(cutoffOptions[0].value);
-            setSelectedCutoffData(cutoffOptions[0]);
-        }
+        // Reset selected cutoff when cutoff options change
+        setSelectedCutoff("");
+        setSelectedCutoffData(null);
+        // Reset the first selection flag when cutoff options change
+        isFirstCutoffSelection.current = true;
     }, [cutoffOptions]);
+
+    // Add a ref to track if it's the first cutoff selection
+    const isFirstCutoffSelection = useRef(true);
 
     const handleCutoffChange = (value) => {
         const newCutoffData = cutoffOptions.find((opt) => opt.value === value);
@@ -91,22 +96,28 @@ export function useWorkSchedule({
         setSelectedCutoff(value);
         setSelectedCutoffData(newCutoffData);
 
-        // Force reset EVERYTHING
-        setFile(null);
-        setEmployeeData([]);
-        setEmployeeHeaders([]);
-        setCutoffText("");
-        setEditedCells(new Set());
-        setValidationErrors([]);
-        setSubmitResult(null);
+        // Only reset and show message if this is NOT the first selection
+        if (!isFirstCutoffSelection.current) {
+            // Force reset EVERYTHING
+            setFile(null);
+            setEmployeeData([]);
+            setEmployeeHeaders([]);
+            setCutoffText("");
+            setEditedCells(new Set());
+            setValidationErrors([]);
+            setSubmitResult(null);
 
-        // Clear the file input element
-        const fileInput = document.querySelector('input[type="file"]');
-        if (fileInput) fileInput.value = "";
+            // Clear the file input element
+            const fileInput = document.querySelector('input[type="file"]');
+            if (fileInput) fileInput.value = "";
 
-        toast.info(
-            "Cutoff changed. Please upload a schedule for the new cutoff period.",
-        );
+            toast.info(
+                "Cutoff changed. Please upload a schedule for the new cutoff period.",
+            );
+        } else {
+            // First selection - just mark that it's no longer the first
+            isFirstCutoffSelection.current = false;
+        }
     };
 
     const runValidation = (data, headers, cutoffData) => {
@@ -178,7 +189,6 @@ export function useWorkSchedule({
                 const selectedLabel = `Cutoff: ${formatDate(selectedCutoffData.start)} to ${formatDate(selectedCutoffData.end)}`;
                 const excelCutoff = parsedCutoffText.toString().trim();
 
-                // Normalize both for comparison
                 const normalize = (str) =>
                     str.replace(/\s+/g, " ").trim().toLowerCase();
 
@@ -195,6 +205,9 @@ export function useWorkSchedule({
                 }
             }
 
+            // NOW: 8 static columns instead of 6 (Emp ID, Name, Dept, Prod Line, Team, Shift Type, Supervisor ID, Approver2 ID)
+            const STATIC_COLUMNS = 8;
+
             const parsedData =
                 dataStartRow !== -1
                     ? json
@@ -203,15 +216,47 @@ export function useWorkSchedule({
                               (row) =>
                                   row[0] && row[0].toString().trim() !== "",
                           )
+                          .map((row) => {
+                              // Store all static columns (0-7)
+                              // Schedule columns start from index 8
+                              return {
+                                  empId: row[0]?.toString() || "",
+                                  empName: row[1] || "",
+                                  department: row[2] || "",
+                                  prodLine: row[3] || "",
+                                  team: row[4] || "",
+                                  shiftType: row[5] || "",
+                                  supervisorId: row[6]?.toString() || "",
+                                  approver2Id: row[7]?.toString() || "",
+                                  // Store the schedule data as an array from column 8 onwards
+                                  scheduleData: row.slice(STATIC_COLUMNS),
+                              };
+                          })
                     : [];
+
+            // Convert to the old format for compatibility with existing code
+            const formattedData = parsedData.map((item) => {
+                // Create an array with all columns (static + schedule)
+                return [
+                    item.empId,
+                    item.empName,
+                    item.department,
+                    item.prodLine,
+                    item.team,
+                    item.shiftType,
+                    item.supervisorId,
+                    item.approver2Id,
+                    ...item.scheduleData,
+                ];
+            });
 
             setFile(uploaded);
             setCutoffText(parsedCutoffText);
-            setEmployeeData(parsedData);
+            setEmployeeData(formattedData);
 
-            if (parsedData.length > 0 && headersRow) {
+            if (formattedData.length > 0 && headersRow) {
                 const validation = runValidation(
-                    parsedData,
+                    formattedData,
                     headersRow,
                     selectedCutoffData,
                 );
@@ -261,15 +306,17 @@ export function useWorkSchedule({
     };
 
     const handleDownload = () => {
-        if (!selectedCutoff) {
-            toast.error("Select a cutoff period first");
-            return;
-        }
+        if (!selectedCutoff) return;
         setIsLoading(true);
+        setDownloadComplete(false);
+        const params = new URLSearchParams({ cutoff_id: selectedCutoff });
+        window.open(
+            route("workschedule.template.download") + "?" + params.toString(),
+            "_blank",
+        );
         setTimeout(() => {
             setIsLoading(false);
             setDownloadComplete(true);
-            toast.success("Template is being downloaded");
             setTimeout(() => setDownloadComplete(false), 2000);
         }, 1000);
     };
@@ -297,16 +344,42 @@ export function useWorkSchedule({
                 selectedCutoffData.start,
                 selectedCutoffData.end,
             );
-            const scheduleStartCol = 6;
 
-            const employeesData = employeeData.map((row) => {
+            // Schedule starts at column index 8 (after 8 static columns)
+            const STATIC_COLUMNS = 8;
+            const scheduleStartCol = STATIC_COLUMNS;
+
+            // DEBUG: Log the data structure
+            console.log("=== SUBMIT DEBUG ===");
+            console.log("Total days:", totalDays);
+            console.log("Employee headers:", employeeHeaders);
+            console.log("Employee headers length:", employeeHeaders.length);
+            console.log("First employee row:", employeeData[0]);
+            console.log("First employee row length:", employeeData[0]?.length);
+            console.log("Schedule start column:", scheduleStartCol);
+            console.log(
+                "Expected schedule columns:",
+                employeeHeaders.length - scheduleStartCol,
+            );
+            console.log(
+                "Schedule data from column 8:",
+                employeeData[0]?.slice(8),
+            );
+
+            const employeesData = employeeData.map((row, idx) => {
                 const availableDayCols =
                     employeeHeaders.length - scheduleStartCol;
                 const daysToProcess = Math.min(totalDays, availableDayCols);
                 const schedule = {};
 
+                console.log(`\nEmployee ${idx} - ${row[1]}:`);
+                console.log(`  Available day cols: ${availableDayCols}`);
+                console.log(`  Days to process: ${daysToProcess}`);
+
                 for (let i = 0; i < daysToProcess; i++) {
                     const value = row[scheduleStartCol + i];
+                    console.log(`  Day ${i + 1}, Value: "${value}"`);
+
                     if (
                         value !== undefined &&
                         value !== null &&
@@ -314,11 +387,16 @@ export function useWorkSchedule({
                     ) {
                         const shiftCode = value.toString().trim();
                         const shiftEntry = shiftMap[shiftCode];
+                        console.log(
+                            `    Shift code: ${shiftCode}, Found: ${!!shiftEntry}, ID: ${shiftEntry?.id}`,
+                        );
                         schedule[(i + 1).toString()] = shiftEntry
                             ? shiftEntry.id
                             : shiftCode;
                     }
                 }
+
+                console.log(`  Final schedule:`, schedule);
 
                 return {
                     empId: row[0]?.toString() || "",
@@ -327,11 +405,15 @@ export function useWorkSchedule({
                     prodLine: row[3] || "",
                     team: row[4] || "",
                     shiftType: row[5] || "",
+                    supervisorId: row[6]?.toString() || "",
+                    approver2Id: row[7]?.toString() || "",
                     schedule,
                     formattedStartDate: selectedCutoffData.start,
                     formattedEndDate: selectedCutoffData.end,
                 };
             });
+
+            console.log("Final employees data:", employeesData);
 
             const result = onSubmitSchedule
                 ? await onSubmitSchedule({

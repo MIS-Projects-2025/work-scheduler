@@ -1,4 +1,4 @@
-import { router } from "@inertiajs/react"; // ADD THIS IMPORT
+import { router } from "@inertiajs/react";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -27,31 +27,42 @@ export default function WorkScheduleTemplate({
     employees = [],
     shifts = [],
 }) {
-    // Create the submit handler directly in this component
     const handleSubmitSchedule = async (data) => {
-        console.log("Submitting schedule data:", data);
+        try {
+            const response = await fetch(
+                route("workschedule.template.submit"),
+                {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        Accept: "application/json",
+                        "X-Requested-With": "XMLHttpRequest",
+                        "X-CSRF-TOKEN": document
+                            .querySelector('meta[name="csrf-token"]')
+                            ?.getAttribute("content"),
+                    },
+                    body: JSON.stringify(data),
+                },
+            );
 
-        return new Promise((resolve, reject) => {
-            router.post(route("workschedule.template.submit"), data, {
-                onSuccess: (response) => {
-                    console.log("Submit success:", response);
-                    resolve({
-                        status: "success",
-                        saved: data.employees.map((e) => e.empId),
-                        message: "Schedules saved successfully",
-                    });
-                },
-                onError: (errors) => {
-                    console.error("Submit error:", errors);
-                    reject({
-                        status: "error",
-                        error: Object.values(errors).join(", "),
-                    });
-                },
-            });
-        });
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw {
+                    status: "error",
+                    error: errorData?.error || "Request failed",
+                };
+            }
+
+            const result = await response.json();
+
+            return result; // ✅ THIS goes to your modal
+        } catch (err) {
+            throw {
+                status: "error",
+                error: err.error || "Failed to submit schedules",
+            };
+        }
     };
-
     // Pass the handler to the hook
     const {
         isFullscreen,
@@ -125,6 +136,7 @@ export default function WorkScheduleTemplate({
                                 options={cutoffOptions}
                                 value={selectedCutoff}
                                 onChange={handleCutoffChange}
+                                placeholder="Select a cutoff period..."
                             />
                         </CardContent>
                     </Card>
@@ -200,7 +212,7 @@ export default function WorkScheduleTemplate({
                                 <ScheduleTableViewing
                                     data={employeeData}
                                     headers={employeeHeaders}
-                                    frozenColumns={6}
+                                    frozenColumns={8}
                                     stickyColumns={2}
                                     shiftMap={shiftMap}
                                     shiftOptions={shiftOptions}
