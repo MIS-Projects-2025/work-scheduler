@@ -286,6 +286,8 @@ class HrisApiService
                     'department' => $info['department']  ?? null,
                     'prodline'   => $info['prodline']    ?? null,
                     'station'    => $info['station']     ?? null,
+                    'team'       => $info['team']        ?? null,
+                    'shift'      => $info['shift']       ?? null,
                 ];
             }
 

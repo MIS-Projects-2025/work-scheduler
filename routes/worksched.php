@@ -31,4 +31,8 @@ Route::prefix('work-schedule')->name('workschedule.')->group(function () {
 
     // Helper: list all dates in a cutoff period
     Route::get('/cutoff-days', [WorkScheduleController::class, 'getCutoffDays'])->name('cutoff-days');
+
+    Route::post('/acknowledge', [WorkScheduleController::class, 'acknowledge'])->name('acknowledge');
+    Route::post('/approve',    [WorkScheduleController::class, 'approve'])->name('approve');
+    Route::post('/disapprove', [WorkScheduleController::class, 'disapprove'])->name('disapprove');
 });

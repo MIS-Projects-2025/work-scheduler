@@ -17,8 +17,6 @@ import {
 } from "@/components/ui/command";
 
 // ─── Single Combobox ──────────────────────────────────────────────────────────
-// Fully compatible with AntD Form.Item noStyle (value + onChange props).
-// Also accepts onFocus for cascading load triggers.
 
 export const Combobox = ({
     options = [],
@@ -31,8 +29,8 @@ export const Combobox = ({
     clearable = true,
     className,
     style,
-    allowCustomValue = true, // Add this prop
-    loadOptions, // async function (search, page) => { options: [], hasMore: boolean }
+    allowCustomValue = true,
+    loadOptions,
 }) => {
     const [open, setOpen] = useState(false);
     const [asyncOptions, setAsyncOptions] = useState([]);
@@ -42,14 +40,13 @@ export const Combobox = ({
     const [currentSearch, setCurrentSearch] = useState("");
     const [searchTimeout, setSearchTimeout] = useState(null);
 
-    // Find matching option, but if not found, create a temporary option for display
     const matchedOption = (
         asyncOptions.length > 0 ? asyncOptions : options
     ).find((o) => String(o.value) === String(value));
+
     const selectedLabel = matchedOption?.label ?? (value ? String(value) : "");
 
     const handleSelect = (optValue) => {
-        // Find the actual option by label or value
         const opt = (asyncOptions.length > 0 ? asyncOptions : options).find(
             (o) => String(o.label) === optValue || String(o.value) === optValue,
         );
@@ -63,7 +60,6 @@ export const Combobox = ({
         onChange?.(undefined);
     };
 
-    // Combine options with current value if it doesn't exist and allowCustomValue is true
     const displayOptions =
         allowCustomValue && value && !matchedOption
             ? [
@@ -140,7 +136,7 @@ export const Combobox = ({
                     type="button"
                     disabled={disabled || loading}
                     className={cn(
-                        "flex w-full items-center justify-between rounded-md border border-input bg-background px-3 text-sm",
+                        "flex w-full items-center justify-between rounded-md border border-input bg-background px-3 h-11 text-sm",
                         "hover:bg-accent/40 transition-colors",
                         "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
                         "disabled:cursor-not-allowed disabled:opacity-50",
@@ -156,7 +152,8 @@ export const Combobox = ({
                     >
                         {loading ? "Loading…" : selectedLabel || placeholder}
                     </span>
-                    <span className="flex items-center gap-0.5 ml-1 flex-shrink-0">
+
+                    <span className="flex items-center gap-1 ml-2 flex-shrink-0">
                         {clearable &&
                             value != null &&
                             value !== "" &&
@@ -165,13 +162,14 @@ export const Combobox = ({
                                 <span
                                     role="button"
                                     tabIndex={-1}
-                                    className="rounded p-0.5 hover:bg-muted transition-colors"
+                                    className="rounded p-1 hover:bg-muted transition-colors"
                                     onClick={handleClear}
                                 >
-                                    <X className="h-3 w-3 text-muted-foreground hover:text-foreground" />
+                                    <X className="h-4 w-4 text-muted-foreground hover:text-foreground" />
                                 </span>
                             )}
-                        <ChevronsUpDown className="h-3.5 w-3.5 text-muted-foreground/50 shrink-0" />
+
+                        <ChevronsUpDown className="h-4 w-4 text-muted-foreground/60 shrink-0" />
                     </span>
                 </button>
             </PopoverTrigger>
@@ -186,11 +184,12 @@ export const Combobox = ({
                 <Command>
                     <CommandInput
                         placeholder="Search…"
-                        className="h-8 text-sm border-none focus:ring-0"
+                        className="h-9 text-sm border-none focus:ring-0"
                         onValueChange={
                             loadOptions ? handleSearchChange : undefined
                         }
                     />
+
                     <CommandList
                         className="max-h-56 overflow-y-auto"
                         onWheel={(e) => e.stopPropagation()}
@@ -199,6 +198,7 @@ export const Combobox = ({
                         <CommandEmpty className="py-5 text-center text-xs text-muted-foreground">
                             No results found.
                         </CommandEmpty>
+
                         <CommandGroup>
                             {displayOptions.map((opt) => (
                                 <CommandItem
@@ -209,7 +209,7 @@ export const Combobox = ({
                                 >
                                     <Check
                                         className={cn(
-                                            "h-3.5 w-3.5 flex-shrink-0 text-primary",
+                                            "h-4 w-4 flex-shrink-0 text-primary",
                                             String(value) === String(opt.value)
                                                 ? "opacity-100"
                                                 : "opacity-0",
@@ -268,7 +268,7 @@ export const MultiCombobox = ({
                     type="button"
                     disabled={disabled || loading}
                     className={cn(
-                        "flex w-full items-center justify-between rounded-md border border-input bg-background px-3 text-sm",
+                        "flex w-full items-center justify-between rounded-md border border-input bg-background px-3 h-11 text-sm",
                         "hover:bg-accent/40 transition-colors",
                         "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
                         "disabled:cursor-not-allowed disabled:opacity-50",
@@ -287,7 +287,7 @@ export const MultiCombobox = ({
                                     <Badge
                                         key={l}
                                         variant="secondary"
-                                        className="text-[10px] px-1.5 py-0 h-4 font-normal"
+                                        className="text-xs px-2 py-0.5"
                                     >
                                         {l}
                                     </Badge>
@@ -299,7 +299,8 @@ export const MultiCombobox = ({
                             </span>
                         )}
                     </span>
-                    <ChevronsUpDown className="h-3.5 w-3.5 text-muted-foreground/50 shrink-0 ml-1" />
+
+                    <ChevronsUpDown className="h-4 w-4 text-muted-foreground/60 shrink-0 ml-2" />
                 </button>
             </PopoverTrigger>
 
@@ -312,8 +313,9 @@ export const MultiCombobox = ({
                 <Command>
                     <CommandInput
                         placeholder="Search…"
-                        className="h-8 text-sm border-none focus:ring-0"
+                        className="h-9 text-sm border-none focus:ring-0"
                     />
+
                     <CommandList
                         className="max-h-56 overflow-y-auto"
                         onWheel={(e) => e.stopPropagation()}
@@ -321,11 +323,13 @@ export const MultiCombobox = ({
                         <CommandEmpty className="py-5 text-center text-xs text-muted-foreground">
                             No results found.
                         </CommandEmpty>
+
                         <CommandGroup>
                             {options.map((opt) => {
                                 const isSelected = selected.some(
                                     (v) => String(v) === String(opt.value),
                                 );
+
                                 return (
                                     <CommandItem
                                         key={opt.value}
@@ -335,7 +339,7 @@ export const MultiCombobox = ({
                                     >
                                         <Check
                                             className={cn(
-                                                "h-3.5 w-3.5 flex-shrink-0 text-primary",
+                                                "h-4 w-4 flex-shrink-0 text-primary",
                                                 isSelected
                                                     ? "opacity-100"
                                                     : "opacity-0",

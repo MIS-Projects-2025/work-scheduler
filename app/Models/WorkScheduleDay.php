@@ -2,10 +2,12 @@
 
 namespace App\Models;
 
+use App\Traits\Loggable;
 use Illuminate\Database\Eloquent\Model;
 
 class WorkScheduleDay extends Model
 {
+    use Loggable;
     protected $table = 'work_schedule_days';
 
     protected $primaryKey = 'id';

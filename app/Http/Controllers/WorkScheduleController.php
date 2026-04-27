@@ -3,9 +3,11 @@
 namespace App\Http\Controllers;
 
 use App\Exports\WorkScheduleTemplateExport;
+use App\Models\WorkSchedule;
 use App\Services\WorkScheduleService;
 use Maatwebsite\Excel\Facades\Excel;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class WorkScheduleController extends Controller
 {
@@ -112,27 +114,41 @@ class WorkScheduleController extends Controller
     // -------------------------------------------------------------------------
     // View / detail
     // -------------------------------------------------------------------------
-
     public function viewSchedules(Request $request)
     {
-        $request->validate([
-            'created_by' => 'required|string',
-            'date_start' => 'required|date',
-            'date_end'   => 'required|date',
-        ]);
+        $filters = [];
 
-        $perPage = (int) $request->input('perPage', 20);
-        $page = (int) $request->input('page', 1);
-        $search = (string) $request->input('search', '');
+        if ($hash = $request->input('hash')) {
+            try {
+                $filters = json_decode(base64_decode($hash), true) ?? [];
+            } catch (\Exception) {
+                $filters = [];
+            }
+        }
+
+        // Read from decoded hash directly, not from $request
+        $createdBy = $filters['created_by'] ?? null;
+        $dateStart  = $filters['date_start'] ?? null;
+        $dateEnd    = $filters['date_end'] ?? null;
+        $status     = isset($filters['status']) ? (int) $filters['status'] : null;
+        $perPage    = (int) ($filters['perPage'] ?? 20);
+        $page       = (int) ($filters['page'] ?? 1);
+        $search     = (string) ($filters['search'] ?? '');
+
+        // Validate decoded values manually
+        if (!$createdBy || !$dateStart || !$dateEnd || $status === null) {
+            return redirect()->route('workschedule.index');
+        }
 
         return inertia('WorkSchedule/View', $this->service->getViewData(
             session('emp_data.emp_id'),
-            $request->input('created_by'),
-            $request->input('date_start'),
-            $request->input('date_end'),
+            $createdBy,
+            $dateStart,
+            $dateEnd,
             $perPage,
             $page,
-            $search
+            $search,
+            $status
         ));
     }
 
@@ -160,5 +176,82 @@ class WorkScheduleController extends Controller
         }
 
         return response()->json(['cutoff' => $cutoff, 'days' => $days]);
+    }
+
+    public function acknowledge(Request $request)
+    {
+        $request->validate([
+            'created_by' => 'required|string',
+            'date_start' => 'required|date',
+            'date_end'   => 'required|date',
+        ]);
+
+        $empId = session('emp_data.emp_id');
+
+        $this->service->acknowledge(
+            $empId,
+            $request->input('created_by'),
+            $request->input('date_start'),
+            $request->input('date_end')
+        );
+
+        return back();
+    }
+    public function approve(Request $request)
+    {
+
+        $data = $this->validateRequest($request);
+
+        $empId = session('emp_data.emp_id');
+
+        $this->service->updateStatus(
+            $empId,
+            $data['created_by'],
+            $data['date_start'],
+            $data['date_end'],
+            WorkSchedule::STATUS_APPROVED,
+            $data['emp_ids'] ?? [],
+            $data['remarks'] ?? null
+        );
+
+        return back()->with('success', 'Approved successfully');
+    }
+
+    public function disapprove(Request $request)
+    {
+        $data = $this->validateRequest($request, true);
+
+        $empId = session('emp_data.emp_id');
+
+        $this->service->updateStatus(
+            $empId,
+            $data['created_by'],
+            $data['date_start'],
+            $data['date_end'],
+            WorkSchedule::STATUS_DISAPPROVED,
+            $data['emp_ids'] ?? [],
+            $data['remarks']
+        );
+
+        return back();
+    }
+
+    private function validateRequest(Request $request, $requireRemarks = false)
+    {
+        $rules = [
+            'created_by' => 'required|string',
+            'date_start' => 'required|date',
+            'date_end'   => 'required|date',
+            'remarks'    => ($requireRemarks ? 'required' : 'nullable') . '|string|max:500',
+        ];
+
+        // Add emp_ids validation only if present in request
+        if ($request->has('emp_ids')) {
+            $rules['emp_ids'] = 'array';
+        }
+
+        Log::info('Validation rules being applied:', $rules);
+
+        return $request->validate($rules);
     }
 }

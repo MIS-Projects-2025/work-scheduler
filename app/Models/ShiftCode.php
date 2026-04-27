@@ -2,10 +2,12 @@
 
 namespace App\Models;
 
+use App\Traits\Loggable;
 use Illuminate\Database\Eloquent\Model;
 
 class ShiftCode extends Model
 {
+    use Loggable;
     protected $table = 'shift_codes';
 
     protected $primaryKey = 'shift_code_id';

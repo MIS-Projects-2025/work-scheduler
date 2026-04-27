@@ -2,10 +2,12 @@
 
 namespace App\Models;
 
+use App\Traits\Loggable;
 use Illuminate\Database\Eloquent\Model;
 
 class PayrollCutoffSchedule extends Model
 {
+    use Loggable;
     protected $table = 'payroll_cutoff_schedule';
 
     protected $primaryKey = 'ID';

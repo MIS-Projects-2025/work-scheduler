@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\WorkSchedule;
 use App\Repositories\WorkScheduleRepository;
 use Illuminate\Pagination\LengthAwarePaginator;
 
@@ -128,12 +129,13 @@ class WorkScheduleService
         string $dateEnd,
         int $perPage = 20,
         int $page = 1,
-        string $search = ''
+        string $search = '',
+        int $status
     ): array {
         $shiftCodes = $this->getShiftCodesForManager($managerEmpId);
 
         // Get paginated schedules
-        $schedulesQuery = $this->repo->getSchedulesByGroupQuery($createdBy, $dateStart, $dateEnd);
+        $schedulesQuery = $this->repo->getSchedulesByGroupQuery($createdBy, $dateStart, $dateEnd, $status, $managerEmpId);
 
         // Apply search filter if needed
         if (!empty($search)) {
@@ -152,24 +154,17 @@ class WorkScheduleService
         $employeeIds = $paginatedSchedules->pluck('emp_id')->toArray();
         $employees = $this->hris->fetchEmployeesBulk($employeeIds);
 
-        $workDetailsMap = [];
-        foreach ($employeeIds as $id) {
-            $workDetailsMap[$id] = $this->hris->fetchWorkDetails($id);
-        }
-
         $daysInPeriod = $this->buildDateRange($dateStart, $dateEnd);
         $staticHeaders = ['Emp ID', 'Employee Name', 'Department', 'Production Line', 'Team', 'Shift Type'];
 
         // First row: dates (15-Jan, 16-Jan, etc.)
         $dateHeaders = array_map(function (string $date) {
-            $dayObj = new \DateTime($date);
-            return $dayObj->format('d-M');
+            return (new \DateTime($date))->format('d-M');
         }, $daysInPeriod);
 
         // Second row: day names (MON, TUE, WED, etc.)
         $dayHeaders = array_map(function (string $date) {
-            $dayObj = new \DateTime($date);
-            return strtoupper(substr($dayObj->format('l'), 0, 3));
+            return strtoupper(substr((new \DateTime($date))->format('l'), 0, 3));
         }, $daysInPeriod);
 
         // Combine static headers with date headers for the first row
@@ -182,22 +177,21 @@ class WorkScheduleService
         );
 
         // Build rows from paginated data
-        $rows = collect($paginatedSchedules->items())->map(function ($schedule) use ($employees, $workDetailsMap, $daysInPeriod) {
+        $rows = collect($paginatedSchedules->items())->map(function ($schedule) use ($employees, $daysInPeriod) {
             $daysMap = [];
             foreach ($schedule->days as $day) {
                 $daysMap[$day->work_date] = $day->shiftCode?->shiftcode ?? '';
             }
 
             $empData = $employees[$schedule->emp_id] ?? [];
-            $workData = $workDetailsMap[$schedule->emp_id] ?? [];
 
             $row = [
                 $schedule->emp_id,
-                $empData['emp_name'] ?? '',
+                $empData['emp_name']   ?? '',
                 $empData['department'] ?? '',
-                $empData['prodline'] ?? '',
-                $workData['team'] ?? '',
-                $workData['shift_type'] ?? '',
+                $empData['prodline']   ?? '',
+                $empData['team']       ?? '',
+                $empData['shift']      ?? '',
             ];
 
             foreach ($daysInPeriod as $date) {
@@ -210,34 +204,86 @@ class WorkScheduleService
         // Prepare pagination meta
         $paginationMeta = [
             'currentPage' => $paginatedSchedules->currentPage(),
-            'lastPage' => $paginatedSchedules->lastPage(),
-            'perPage' => $paginatedSchedules->perPage(),
-            'total' => $paginatedSchedules->total(),
-            'from' => $paginatedSchedules->firstItem(),
-            'to' => $paginatedSchedules->lastItem(),
+            'lastPage'    => $paginatedSchedules->lastPage(),
+            'perPage'     => $paginatedSchedules->perPage(),
+            'total'       => $paginatedSchedules->total(),
+            'from'        => $paginatedSchedules->firstItem(),
+            'to'          => $paginatedSchedules->lastItem(),
         ];
 
+        $isCreator  = $managerEmpId === $createdBy;
+        $isApprover = \App\Models\WorkSchedule::where('payroll_date_start', $dateStart)
+            ->where('payroll_date_end', $dateEnd)
+            ->where('created_by', $createdBy)
+            ->where('approver2_id', $managerEmpId)
+            ->exists();
+
+        $isOwnRecord = !$isCreator && !$isApprover;
+        $canApprove = ($isApprover && $status === 1);
         return [
             'groupedData' => [[
-                'created_by' => $createdBy,
+                'created_by'         => $createdBy,
                 'payroll_date_start' => $dateStart,
-                'payroll_date_end' => $dateEnd,
-                'headers' => $firstRowHeaders,
-                'subHeaders' => $secondRowHeaders,
-                'staticHeaders' => $staticHeaders,
-                'dateHeaders' => $dateHeaders,
-                'dayHeaders' => $dayHeaders,
-                'schedules' => $rows,
+                'payroll_date_end'   => $dateEnd,
+                'headers'            => $firstRowHeaders,
+                'subHeaders'         => $secondRowHeaders,
+                'staticHeaders'      => $staticHeaders,
+                'dateHeaders'        => $dateHeaders,
+                'dayHeaders'         => $dayHeaders,
+                'schedules'          => $rows,
             ]],
-            'shiftCodes' => $shiftCodes,
-            'dateStart' => $dateStart,
-            'dateEnd' => $dateEnd,
-            'pagination' => $paginationMeta,
-            'filters' => [
-                'search' => $search,
+            'shiftCodes'    => $shiftCodes,
+            'dateStart'     => $dateStart,
+            'dateEnd'       => $dateEnd,
+            'pagination'    => $paginationMeta,
+            'filters'       => [
+                'search'  => $search,
                 'perPage' => $perPage,
+                'status'  => $status,
+            ],
+            'viewerContext' => [
+                'isCreator'   => $isCreator,
+                'isApprover'  => $isApprover,
+                'isOwnRecord' => $isOwnRecord,
+                'canApprove'  => $canApprove,
+                'status'      => $status,
+                'empId'       => $managerEmpId,
             ],
         ];
+    }
+    public function acknowledge($empId, $createdBy, $dateStart, $dateEnd)
+    {
+        return $this->repo->updateAcknowledge(
+            $empId,
+            $createdBy,
+            $dateStart,
+            $dateEnd
+        );
+    }
+    public function updateStatus(
+        $approverId,
+        $createdBy,
+        $dateStart,
+        $dateEnd,
+        $status,
+        $empIds = [],
+        $remarks = null
+    ) {
+        $updated = $this->repo->bulkUpdateStatus(
+            $approverId,
+            $createdBy,
+            $dateStart,
+            $dateEnd,
+            $status,
+            $empIds,
+            $remarks
+        );
+
+        if ($updated === 0) {
+            throw new \Exception('No records updated.');
+        }
+
+        return $updated;
     }
     // -------------------------------------------------------------------------
     // Helpers
@@ -258,7 +304,6 @@ class WorkScheduleService
     public function statusLabel(int $status): string
     {
         return match ($status) {
-            0       => 'Draft',
             1       => 'For Approval',
             2       => 'To Acknowledge',
             3       => 'Acknowledged',

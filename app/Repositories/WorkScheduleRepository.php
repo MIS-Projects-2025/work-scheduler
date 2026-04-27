@@ -146,7 +146,6 @@ class WorkScheduleRepository
     public function countAllStatuses(string $empId, int $empPosition): array
     {
         $statuses = [
-            'draft'       => 0,
             'forApproval' => 1,
             'forAck'      => 2,
             'doneAck'     => 3,
@@ -214,12 +213,65 @@ class WorkScheduleRepository
     public function getSchedulesByGroupQuery(
         string $createdBy,
         string $dateStart,
-        string $dateEnd
+        string $dateEnd,
+        int $status,
+        string $viewerEmpId
     ): \Illuminate\Database\Eloquent\Builder {
-        return WorkSchedule::where('payroll_date_start', $dateStart)
+        $query = WorkSchedule::where('payroll_date_start', $dateStart)
             ->where('payroll_date_end', $dateEnd)
             ->where('created_by', $createdBy)
+            ->where('work_sched_status', $status)
             ->with(['days.shiftCode'])
             ->orderBy('emp_id');
+
+        $isCreator  = $viewerEmpId === $createdBy;
+        $isApprover = WorkSchedule::where('payroll_date_start', $dateStart)
+            ->where('payroll_date_end', $dateEnd)
+            ->where('created_by', $createdBy)
+            ->where('approver2_id', $viewerEmpId)
+            ->exists();
+
+        if ($isCreator || $isApprover) {
+            // See all records in this group
+            return $query;
+        }
+
+        // Regular employee — only their own record
+        return $query->where('emp_id', $viewerEmpId);
+    }
+    public function updateAcknowledge($empId, $createdBy, $dateStart, $dateEnd)
+    {
+        return WorkSchedule::where('emp_id', $empId)
+            ->where('created_by', $createdBy)
+            ->where('payroll_date_start', $dateStart)
+            ->where('payroll_date_end', $dateEnd)
+            ->where('work_sched_status', 2)
+            ->update([
+                'work_sched_status' => 3
+            ]);
+    }
+    public function bulkUpdateStatus(
+        $approverId,
+        $createdBy,
+        $dateStart,
+        $dateEnd,
+        $status,
+        $empIds = [],
+        $remarks = null
+    ) {
+        $query = WorkSchedule::where('created_by', $createdBy)
+            ->where('payroll_date_start', $dateStart)
+            ->where('payroll_date_end', $dateEnd)
+            ->where('approver2_id', $approverId)
+            ->where('work_sched_status', WorkSchedule::STATUS_PENDING_APPROVAL);
+
+        if (!empty($empIds)) {
+            $query->whereIn('emp_id', $empIds);
+        }
+
+        return $query->update([
+            'work_sched_status' => $status,
+            'remarks'           => $remarks,
+        ]);
     }
 }

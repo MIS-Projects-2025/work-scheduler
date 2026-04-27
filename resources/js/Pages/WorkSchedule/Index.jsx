@@ -29,7 +29,6 @@ import { Pagination } from "@/Components/Pagination";
 // ─────────────────────────────────────────────
 
 const STATUS_TABS = [
-    { value: 0, label: "Draft", countKey: "draft", variant: "secondary" },
     {
         value: 1,
         label: "For Approval",
@@ -180,13 +179,18 @@ export default function WorkScheduleIndex({
     };
 
     const handleView = (row) => {
-        router.visit(
-            route("workschedule.view", {
-                created_by: row.created_by,
-                date_start: row.payroll_date_start,
-                date_end: row.payroll_date_end,
-            }),
-        );
+        const params = {
+            created_by: row.created_by,
+            date_start: row.payroll_date_start,
+            date_end: row.payroll_date_end,
+            status: row.work_sched_status,
+            perPage: 20,
+            page: 1,
+            search: "",
+        };
+        router.get(route("workschedule.view"), {
+            hash: btoa(JSON.stringify(params)),
+        });
     };
 
     // ── Get data from paginator ──
