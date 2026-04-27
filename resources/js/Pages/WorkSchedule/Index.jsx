@@ -92,7 +92,7 @@ export default function WorkScheduleIndex({
     const [schedules, setSchedules] = useState(initialSchedules);
     const [tabCounts, setTabCounts] = useState(initialTabCounts);
     const [activeStatus, setActiveStatus] = useState(
-        initialFilters.status || 0,
+        initialFilters.status || 1,
     );
     const [search, setSearch] = useState(initialFilters.search || "");
     const [orderBy, setOrderBy] = useState(

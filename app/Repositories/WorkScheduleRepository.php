@@ -14,12 +14,11 @@ class WorkScheduleRepository
     // Cutoff
     // -------------------------------------------------------------------------
 
-    public function getRecentCutoffs(int $limit = 24): array
+    public function getRecentCutoffs(int $limit = 24): Collection
     {
         return PayrollCutoffSchedule::orderBy('payroll_date_start', 'desc')
             ->limit($limit)
-            ->get()
-            ->toArray();
+            ->get();
     }
 
     public function findCutoff(int $cutoffId): ?PayrollCutoffSchedule
@@ -31,36 +30,33 @@ class WorkScheduleRepository
     // Shift codes
     // -------------------------------------------------------------------------
 
-    public function getShiftCodesByGroup(string $group): array
+    public function getShiftCodesByGroup(string $group): Collection
     {
         return ShiftCode::where('shift_group', $group)
             ->where('shift_code_status', 1)
             ->orderBy('shiftcode')
-            ->get()
-            ->toArray();
+            ->get();
     }
 
-    public function getShiftCodesByGroups(array $groups): array
+    public function getShiftCodesByGroups(array $groups): Collection
     {
         return ShiftCode::whereIn('shift_group', $groups)
             ->where('shift_code_status', 1)
             ->orderBy('shiftcode')
-            ->get()
-            ->toArray();
+            ->get();
     }
 
-    public function getAllActiveShiftCodes(): array
+    public function getAllActiveShiftCodes(): Collection
     {
         return ShiftCode::where('shift_code_status', 1)
             ->orderBy('shiftcode')
-            ->get()
-            ->toArray();
+            ->get();
     }
 
     /**
      * Return shift codes filtered by the manager's production line.
      */
-    public function getFilteredShiftCodes(?string $prodLine): array
+    public function getFilteredShiftCodes(?string $prodLine): Collection
     {
         try {
             if (!empty($prodLine)) {
@@ -119,7 +115,6 @@ class WorkScheduleRepository
 
         $query->orderBy($orderCol, $dir);
 
-        // Use Laravel's built-in paginate method
         return $query->paginate($perPage, ['*'], 'page', $page);
     }
 
@@ -146,10 +141,10 @@ class WorkScheduleRepository
     public function countAllStatuses(string $empId, int $empPosition): array
     {
         $statuses = [
-            'forApproval' => 1,
-            'forAck'      => 2,
-            'doneAck'     => 3,
-            'disapproved' => 4,
+            'forApproval' => WorkSchedule::STATUS_PENDING_APPROVAL,
+            'forAck'      => WorkSchedule::STATUS_APPROVED,
+            'doneAck'     => WorkSchedule::STATUS_ACKNOWLEDGED,
+            'disapproved' => WorkSchedule::STATUS_DISAPPROVED,
         ];
 
         $counts = [];
@@ -188,28 +183,168 @@ class WorkScheduleRepository
     }
 
     // -------------------------------------------------------------------------
-    // Internal helpers
+    // Work schedules - CRUD operations (with Loggable trait support)
     // -------------------------------------------------------------------------
 
     /**
-     * Apply the same access-scoping logic.
-     * Modifies the query builder in place.
+     * Create a new work schedule
+     * Returns the model instance - Loggable trait will automatically log this
      */
-    private function applyAccessScope($query, string $empId, int $status, int $empPosition): void
+    public function createWorkSchedule(array $data): WorkSchedule
     {
-        // Status 2 (To Acknowledge) for regular employees only shows their own rows
-        if ($status === 2 && $empPosition === 1) {
-            $query->where('emp_id', $empId)
-                ->where('work_sched_status', 2);
-            return;
+        return WorkSchedule::create($data);
+    }
+
+    /**
+     * Create multiple work schedules
+     * Returns collection of created models - each will be logged individually
+     */
+    public function createMultipleWorkSchedules(array $schedulesData): Collection
+    {
+        $createdSchedules = new Collection();
+
+        foreach ($schedulesData as $data) {
+            $createdSchedules->push(WorkSchedule::create($data));
         }
 
-        $query->where(function ($q) use ($empId) {
-            $q->where('emp_id', $empId)
-                ->orWhere('created_by', $empId)
-                ->orWhere('approver2_id', $empId);
-        })->where('work_sched_status', $status);
+        return $createdSchedules;
     }
+
+    /**
+     * Update a work schedule
+     * Returns the updated model - Loggable trait will log the changes
+     */
+    public function updateWorkSchedule(WorkSchedule $workSchedule, array $data): WorkSchedule
+    {
+        $workSchedule->update($data);
+        return $workSchedule->fresh();
+    }
+
+    /**
+     * Delete a work schedule
+     * Loggable trait will log this deletion
+     */
+    public function deleteWorkSchedule(WorkSchedule $workSchedule): bool
+    {
+        return $workSchedule->delete();
+    }
+
+    /**
+     * Find a single work schedule by ID
+     */
+    public function findWorkSchedule(int $id): ?WorkSchedule
+    {
+        return WorkSchedule::with(['days.shiftCode'])->find($id);
+    }
+
+    // -------------------------------------------------------------------------
+    // Status update methods (with logging support)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Update acknowledgment status - returns the updated models for logging
+     */
+    public function updateAcknowledge($empId, $createdBy, $dateStart, $dateEnd): Collection
+    {
+        $schedules = WorkSchedule::where('emp_id', $empId)
+            ->where('created_by', $createdBy)
+            ->where('payroll_date_start', $dateStart)
+            ->where('payroll_date_end', $dateEnd)
+            ->where('work_sched_status', WorkSchedule::STATUS_APPROVED)
+            ->get();
+
+        foreach ($schedules as $schedule) {
+            $schedule->update([
+                'work_sched_status' => WorkSchedule::STATUS_ACKNOWLEDGED
+            ]);
+        }
+
+        return $schedules;
+    }
+
+    /**
+     * Update acknowledgment status (returns count only)
+     * Use this when you don't need the models for additional processing
+     */
+    public function updateAcknowledgeCountOnly($empId, $createdBy, $dateStart, $dateEnd): int
+    {
+        return WorkSchedule::where('emp_id', $empId)
+            ->where('created_by', $createdBy)
+            ->where('payroll_date_start', $dateStart)
+            ->where('payroll_date_end', $dateEnd)
+            ->where('work_sched_status', WorkSchedule::STATUS_APPROVED)
+            ->update([
+                'work_sched_status' => WorkSchedule::STATUS_ACKNOWLEDGED
+            ]);
+    }
+
+    /**
+     * Bulk update status - returns updated models for logging
+     */
+    public function bulkUpdateStatus(
+        $approverId,
+        $createdBy,
+        $dateStart,
+        $dateEnd,
+        $status,
+        $empIds = [],
+        $remarks = null
+    ): Collection {
+        $query = WorkSchedule::where('created_by', $createdBy)
+            ->where('payroll_date_start', $dateStart)
+            ->where('payroll_date_end', $dateEnd)
+            ->where('approver2_id', $approverId)
+            ->where('work_sched_status', WorkSchedule::STATUS_PENDING_APPROVAL);
+
+        if (!empty($empIds)) {
+            $query->whereIn('emp_id', $empIds);
+        }
+
+        $schedules = $query->get();
+
+        foreach ($schedules as $schedule) {
+            $schedule->update([
+                'work_sched_status' => $status,
+                'remarks'           => $remarks,
+            ]);
+        }
+
+        return $schedules;
+    }
+
+    /**
+     * Bulk update status (returns count only)
+     * Use this when performance is critical and you don't need logging for each item
+     */
+    public function bulkUpdateStatusCountOnly(
+        $approverId,
+        $createdBy,
+        $dateStart,
+        $dateEnd,
+        $status,
+        $empIds = [],
+        $remarks = null
+    ): int {
+        $query = WorkSchedule::where('created_by', $createdBy)
+            ->where('payroll_date_start', $dateStart)
+            ->where('payroll_date_end', $dateEnd)
+            ->where('approver2_id', $approverId)
+            ->where('work_sched_status', WorkSchedule::STATUS_PENDING_APPROVAL);
+
+        if (!empty($empIds)) {
+            $query->whereIn('emp_id', $empIds);
+        }
+
+        return $query->update([
+            'work_sched_status' => $status,
+            'remarks'           => $remarks,
+        ]);
+    }
+
+    // -------------------------------------------------------------------------
+    // Query builders
+    // -------------------------------------------------------------------------
+
     public function getSchedulesByGroupQuery(
         string $createdBy,
         string $dateStart,
@@ -232,46 +367,33 @@ class WorkScheduleRepository
             ->exists();
 
         if ($isCreator || $isApprover) {
-            // See all records in this group
             return $query;
         }
 
-        // Regular employee — only their own record
         return $query->where('emp_id', $viewerEmpId);
     }
-    public function updateAcknowledge($empId, $createdBy, $dateStart, $dateEnd)
-    {
-        return WorkSchedule::where('emp_id', $empId)
-            ->where('created_by', $createdBy)
-            ->where('payroll_date_start', $dateStart)
-            ->where('payroll_date_end', $dateEnd)
-            ->where('work_sched_status', 2)
-            ->update([
-                'work_sched_status' => 3
-            ]);
-    }
-    public function bulkUpdateStatus(
-        $approverId,
-        $createdBy,
-        $dateStart,
-        $dateEnd,
-        $status,
-        $empIds = [],
-        $remarks = null
-    ) {
-        $query = WorkSchedule::where('created_by', $createdBy)
-            ->where('payroll_date_start', $dateStart)
-            ->where('payroll_date_end', $dateEnd)
-            ->where('approver2_id', $approverId)
-            ->where('work_sched_status', WorkSchedule::STATUS_PENDING_APPROVAL);
 
-        if (!empty($empIds)) {
-            $query->whereIn('emp_id', $empIds);
+    // -------------------------------------------------------------------------
+    // Internal helpers
+    // -------------------------------------------------------------------------
+
+    /**
+     * Apply the same access-scoping logic.
+     * Modifies the query builder in place.
+     */
+    private function applyAccessScope($query, string $empId, int $status, int $empPosition): void
+    {
+        // Status 2 (Approved/To Acknowledge) for regular employees only shows their own rows
+        if ($status === WorkSchedule::STATUS_APPROVED && $empPosition === 1) {
+            $query->where('emp_id', $empId)
+                ->where('work_sched_status', WorkSchedule::STATUS_APPROVED);
+            return;
         }
 
-        return $query->update([
-            'work_sched_status' => $status,
-            'remarks'           => $remarks,
-        ]);
+        $query->where(function ($q) use ($empId) {
+            $q->where('emp_id', $empId)
+                ->orWhere('created_by', $empId)
+                ->orWhere('approver2_id', $empId);
+        })->where('work_sched_status', $status);
     }
 }

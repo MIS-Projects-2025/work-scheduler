@@ -38,7 +38,7 @@ class WorkScheduleController extends Controller
         }
 
         // Get filters from hash or use defaults
-        $status   = (int) ($filters['status'] ?? 0);
+        $status   = (int) ($filters['status'] ?? 1);
         $search   = (string) ($filters['search'] ?? '');
         $orderBy  = (string) ($filters['orderBy'] ?? 'payroll_date_start');
         $orderDir = (string) ($filters['orderDir'] ?? 'desc');

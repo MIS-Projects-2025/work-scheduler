@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\WorkSchedule;
 use App\Repositories\WorkScheduleRepository;
 use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Collection;
 
 class WorkScheduleService
 {
@@ -19,21 +20,22 @@ class WorkScheduleService
     // Shared helpers
     // -------------------------------------------------------------------------
 
-    public function getShiftCodesForManager(string $empId): array
+    public function getShiftCodesForManager(?string $prodLine): Collection
     {
-        $prodLine = $this->hris->fetchWorkDetails($empId)['prod_line'] ?? null;
         return $this->repo->getFilteredShiftCodes($prodLine);
     }
-
     // -------------------------------------------------------------------------
     // Template page
     // -------------------------------------------------------------------------
 
     public function getTemplatePageData(string $empId): array
     {
+        $directReports = $this->hris->fetchDirectReports($empId);
+
         return [
             'cutoffList' => $this->repo->getRecentCutoffs(24),
             'shifts'     => $this->getShiftCodesForManager($empId),
+            'employees'  => $directReports,
         ];
     }
 
