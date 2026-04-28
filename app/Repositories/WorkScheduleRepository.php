@@ -2,6 +2,7 @@
 
 namespace App\Repositories;
 
+use App\Models\Holiday;
 use App\Models\PayrollCutoffSchedule;
 use App\Models\ShiftCode;
 use App\Models\WorkSchedule;
@@ -74,6 +75,17 @@ class WorkScheduleRepository
         } catch (\Exception) {
             return $this->getAllActiveShiftCodes();
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Holidays
+    // -------------------------------------------------------------------------
+
+    public function getHolidaysForPeriod(string $dateStart, string $dateEnd): Collection
+    {
+        return Holiday::whereBetween('holiday_date', [$dateStart, $dateEnd])
+            ->orderBy('holiday_date')
+            ->get();
     }
 
     // -------------------------------------------------------------------------

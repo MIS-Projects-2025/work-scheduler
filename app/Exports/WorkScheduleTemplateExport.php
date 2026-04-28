@@ -5,78 +5,84 @@ namespace App\Exports;
 use App\Models\PayrollCutoffSchedule;
 use App\Models\ShiftCode;
 use App\Services\HrisApiService;
+use Illuminate\Support\Collection;
 use Maatwebsite\Excel\Concerns\Exportable;
 use Maatwebsite\Excel\Concerns\FromCollection;
 use Maatwebsite\Excel\Concerns\ShouldAutoSize;
 use Maatwebsite\Excel\Concerns\WithEvents;
 use Maatwebsite\Excel\Concerns\WithMultipleSheets;
 use Maatwebsite\Excel\Events\AfterSheet;
-use PhpOffice\PhpSpreadsheet\Cell\DataValidation;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
 use PhpOffice\PhpSpreadsheet\Style\Border;
-use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 use Illuminate\Support\Facades\Log;
 
 class WorkScheduleTemplateExport implements WithMultipleSheets
 {
     use Exportable;
 
-    private int $cutoffId;
-    private array $employeeIds;
+    private int        $cutoffId;
+    private array      $employeeIds;
     private HrisApiService $hris;
-    private ?string $managerProdLine;
-    private $filteredShiftCodes;
+    private ?string    $managerProdLine;
+    private Collection $filteredShiftCodes;
+    private array      $holidays; // [['date'=>'YYYY-MM-DD','name'=>...,'type'=>...,'color'=>...], ...]
 
-    public function __construct(int $cutoffId, ?array $employeeIds = [], ?string $managerProdLine = null)
-    {
-        $this->cutoffId        = $cutoffId;
-        $this->employeeIds     = $employeeIds ?? [];
-        $this->hris            = new HrisApiService();
-        $this->managerProdLine = $managerProdLine;
+    public function __construct(
+        int     $cutoffId,
+        ?array  $employeeIds    = [],
+        ?string $managerProdLine = null,
+        mixed   $holidays        = null   // Collection or array from service
+    ) {
+        $this->cutoffId          = $cutoffId;
+        $this->employeeIds       = $employeeIds ?? [];
+        $this->hris              = new HrisApiService();
+        $this->managerProdLine   = $managerProdLine;
         $this->filteredShiftCodes = $this->getFilteredShiftCodes();
+
+        // Normalise holidays to a plain array of ['date','name','type','color']
+        if ($holidays instanceof Collection) {
+            $this->holidays = $holidays->map(fn($h) => [
+                'date'  => $h->holiday_date instanceof \Carbon\Carbon
+                    ? $h->holiday_date->format('Y-m-d')
+                    : (string) $h->holiday_date,
+                'name'  => $h->holiday_name,
+                'type'  => $h->holiday_type,
+                'color' => $h->color ?? '#FF5733',
+            ])->values()->all();
+        } else {
+            $this->holidays = (array) ($holidays ?? []);
+        }
     }
 
-    /**
-     * Filter shift codes based on manager's production line
-     */
-    private function getFilteredShiftCodes()
+    private function getFilteredShiftCodes(): Collection
     {
         try {
             $prodLine = $this->managerProdLine;
 
             if (!empty($prodLine)) {
-                if (strpos($prodLine, 'PL8') !== false) {
-                    // For PL8 lines → use AMS shifts
+                if (str_contains($prodLine, 'PL8')) {
                     return ShiftCode::where('shift_group', 'AMS')
                         ->where('shift_code_status', 1)
                         ->orderBy('shiftcode')
                         ->get();
-                } elseif (strpos($prodLine, 'PL2') !== false) {
-                    // For PL2 lines → use PL2/DEFAULT shifts
+                }
+                if (str_contains($prodLine, 'PL2')) {
                     return ShiftCode::where('shift_group', 'PL2/DEFAULT')
                         ->where('shift_code_status', 1)
                         ->orderBy('shiftcode')
                         ->get();
-                } else {
-                    // For other lines → include both DEFAULT and PL2/DEFAULT shifts
-                    return ShiftCode::whereIn('shift_group', ['DEFAULT', 'PL2/DEFAULT'])
-                        ->where('shift_code_status', 1)
-                        ->orderBy('shiftcode')
-                        ->get();
                 }
+                return ShiftCode::whereIn('shift_group', ['DEFAULT', 'PL2/DEFAULT'])
+                    ->where('shift_code_status', 1)
+                    ->orderBy('shiftcode')
+                    ->get();
             }
 
-            // Fallback: return all active shift codes
-            return ShiftCode::where('shift_code_status', 1)
-                ->orderBy('shiftcode')
-                ->get();
+            return ShiftCode::where('shift_code_status', 1)->orderBy('shiftcode')->get();
         } catch (\Exception $e) {
-            Log::error("Shift codes filtering error: " . $e->getMessage());
-            // Fallback: return all active shift codes
-            return ShiftCode::where('shift_code_status', 1)
-                ->orderBy('shiftcode')
-                ->get();
+            Log::error('Shift codes filtering error: ' . $e->getMessage());
+            return ShiftCode::where('shift_code_status', 1)->orderBy('shiftcode')->get();
         }
     }
 
@@ -94,7 +100,8 @@ class WorkScheduleTemplateExport implements WithMultipleSheets
                 $this->hris,
                 $this->filteredShiftCodes,
                 $days,
-                $this->managerProdLine
+                $this->managerProdLine,
+                $this->holidays
             ),
             new ShiftCodesReferenceSheet($this->filteredShiftCodes),
         ];
@@ -118,24 +125,48 @@ class WorkScheduleTemplateExport implements WithMultipleSheets
 // -----------------------------------------------------------------------------
 class EmployeeListSheet implements FromCollection, ShouldAutoSize, WithEvents
 {
-    private int $cutoffId;
-    private array $employeeIds;
+    private int            $cutoffId;
+    private array          $employeeIds;
     private HrisApiService $hris;
-    private $shiftCodes;
-    private array $days;
-    private ?string $managerProdLine;
+    private Collection     $shiftCodes;
+    private array          $days;
+    private ?string        $managerProdLine;
+    private array          $holidays;      // normalised plain array
+    private array          $holidayMap;    // ['YYYY-MM-DD' => ['name','type','color']]
 
-    // Now we have 8 info columns: Emp ID, Employee Name, Department, Production Line, Team, Shift Type, Supervisor ID, Approver2 ID
+    // 8 info columns: Emp ID, Name, Dept, Prod Line, Team, Shift Type, Supervisor ID, Approver2 ID
     private const INFO_COLS = 8;
 
-    public function __construct(int $cutoffId, array $employeeIds, HrisApiService $hris, $shiftCodes, array $days, ?string $managerProdLine = null)
-    {
+    // Auto-fill rules: team_id=1 & shift_type_id=1
+    // weekday shift_code_id=17, weekend=11, holiday+weekday=21
+    private const AUTO_TEAM_ID       = 1;
+    private const AUTO_SHIFT_TYPE_ID = 1;
+    private const SC_WEEKDAY         = 17;
+    private const SC_WEEKEND         = 11;
+    private const SC_HOLIDAY_WEEKDAY = 21;
+
+    public function __construct(
+        int            $cutoffId,
+        array          $employeeIds,
+        HrisApiService $hris,
+        Collection     $shiftCodes,
+        array          $days,
+        ?string        $managerProdLine = null,
+        array          $holidays        = []
+    ) {
         $this->cutoffId        = $cutoffId;
         $this->employeeIds     = $employeeIds;
         $this->hris            = $hris;
         $this->shiftCodes      = $shiftCodes;
         $this->days            = $days;
         $this->managerProdLine = $managerProdLine;
+        $this->holidays        = $holidays;
+
+        // Build date-keyed map for fast lookups
+        $this->holidayMap = [];
+        foreach ($holidays as $h) {
+            $this->holidayMap[$h['date']] = $h;
+        }
     }
 
     public function collection()
@@ -147,111 +178,82 @@ class EmployeeListSheet implements FromCollection, ShouldAutoSize, WithEvents
     {
         return [
             AfterSheet::class => function (AfterSheet $event) {
-                $sheet = $event->sheet->getDelegate();
+                $sheet     = $event->sheet->getDelegate();
                 $daysCount = count($this->days);
 
-                // MERGE the info columns for the legend note
-                // Instead of A1:F1, now A1:? (up to H1, but we want a single merged "SHIFT CODE LEGEND")
+                // ── Resolve shift codes for auto-fill ─────────────────────────
+                $scWeekday        = $this->getShiftCodeString(self::SC_WEEKDAY);
+                $scWeekend        = $this->getShiftCodeString(self::SC_WEEKEND);
+                $scHolidayWeekday = $this->getShiftCodeString(self::SC_HOLIDAY_WEEKDAY);
+
+                // ── Legend header ─────────────────────────────────────────────
                 $sheet->mergeCells('A1:H1');
                 $sheet->setCellValue('A1', 'SHIFT CODE LEGEND');
-
                 $sheet->getStyle('A1')->applyFromArray([
-                    'font' => [
-                        'bold' => true,
-                        'color' => ['rgb' => 'FFFFFF'],
-                        'size' => 11,
-                    ],
-                    'fill' => [
-                        'fillType' => Fill::FILL_SOLID,
-                        'startColor' => ['rgb' => '4472C4'],
-                    ],
-                    'alignment' => [
-                        'horizontal' => Alignment::HORIZONTAL_CENTER,
-                        'vertical' => Alignment::VERTICAL_CENTER,
-                    ],
+                    'font'      => ['bold' => true, 'color' => ['rgb' => 'FFFFFF'], 'size' => 11],
+                    'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => '4472C4']],
+                    'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
                 ]);
 
-                $codes = $this->shiftCodes->filter(fn($c) => !empty($c->shiftcode))->values();
-
-                $codesPerRow = floor(8 / 2); // 2 columns per code (code + desc) → max 4 codes per row with 8 columns
+                $codes       = $this->shiftCodes->filter(fn($c) => !empty($c->shiftcode))->values();
+                $codesPerRow = 4;
                 $colsPerCode = 2;
 
                 foreach ($codes as $index => $code) {
-                    $row = 2 + intdiv($index, $codesPerRow);
+                    $row      = 2 + intdiv($index, $codesPerRow);
                     $colIndex = ($index % $codesPerRow) * $colsPerCode;
-
-                    $codeCol = $this->colLetter($colIndex);
-                    $descCol = $this->colLetter($colIndex + 1);
+                    $codeCol  = $this->colLetter($colIndex);
+                    $descCol  = $this->colLetter($colIndex + 1);
 
                     $sheet->setCellValue("{$codeCol}{$row}", $code->shiftcode);
                     $sheet->setCellValue("{$descCol}{$row}", $code->shiftcode_desc);
 
-                    $bg = ltrim($code->shiftcode_bg_color, '#') ?: 'FFFFFF';
+                    $bg   = ltrim($code->shiftcode_bg_color, '#') ?: 'FFFFFF';
                     $font = ltrim($code->shiftcode_font_color, '#') ?: '000000';
 
-                    $style = [
-                        'fill' => [
-                            'fillType' => Fill::FILL_SOLID,
-                            'startColor' => ['rgb' => $bg]
-                        ],
-                        'font' => [
-                            'bold' => true,
-                            'color' => ['rgb' => $font]
-                        ],
-                        'borders' => [
-                            'allBorders' => [
-                                'borderStyle' => Border::BORDER_THIN,
-                                'color' => ['rgb' => 'AAAAAA']
-                            ]
-                        ],
-                        'alignment' => [
-                            'vertical' => Alignment::VERTICAL_CENTER
-                        ]
+                    $base = [
+                        'fill'    => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => $bg]],
+                        'font'    => ['bold' => true, 'color' => ['rgb' => $font]],
+                        'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['rgb' => 'AAAAAA']]],
                     ];
-
-                    $sheet->getStyle("{$codeCol}{$row}")->applyFromArray(
-                        array_merge($style, [
-                            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER]
-                        ])
-                    );
-
-                    $sheet->getStyle("{$descCol}{$row}")->applyFromArray(
-                        array_merge($style, [
-                            'alignment' => ['horizontal' => Alignment::HORIZONTAL_LEFT]
-                        ])
-                    );
+                    $sheet->getStyle("{$codeCol}{$row}")->applyFromArray(array_merge($base, ['alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER]]));
+                    $sheet->getStyle("{$descCol}{$row}")->applyFromArray(array_merge($base, ['alignment' => ['horizontal' => Alignment::HORIZONTAL_LEFT]]));
                 }
 
-                // Compute last legend row
-                $totalRows = ceil(count($codes) / $codesPerRow);
+                $totalRows    = ceil(count($codes) / $codesPerRow);
                 $legendEndRow = 1 + $totalRows;
 
-                // spacing row after legend
-                $sepRow = $legendEndRow + 2;
+                // ── Holiday legend row ─────────────────────────────────────────
+                $holidayLegendRow = $legendEndRow + 1;
+                if (!empty($this->holidays)) {
+                    $sheet->mergeCells("A{$holidayLegendRow}:H{$holidayLegendRow}");
+                    $sheet->setCellValue("A{$holidayLegendRow}", '★ Highlighted columns below are holidays');
+                    $sheet->getStyle("A{$holidayLegendRow}")->applyFromArray([
+                        'font'      => ['bold' => true, 'color' => ['rgb' => '7B2D00'], 'size' => 10],
+                        'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'FFDDC1']],
+                        'alignment' => ['horizontal' => Alignment::HORIZONTAL_LEFT, 'vertical' => Alignment::VERTICAL_CENTER],
+                    ]);
+                }
 
-                // ---- CUTOFF HEADER ----
+                $sepRow    = $holidayLegendRow + 1;
+                $lastCol   = $this->colLetter(self::INFO_COLS + $daysCount - 1);
+
+                // ── Cutoff header ──────────────────────────────────────────────
                 $cutoffStart = date('M d, Y', strtotime($this->days[0]));
                 $cutoffEnd   = date('M d, Y', strtotime(end($this->days)));
-
-                $cutoffRow = $sepRow;
-                $lastCol = $this->colLetter(self::INFO_COLS + $daysCount - 1);
+                $cutoffRow   = $sepRow;
 
                 $sheet->mergeCells("A{$cutoffRow}:{$lastCol}{$cutoffRow}");
                 $sheet->setCellValue("A{$cutoffRow}", "Cutoff: {$cutoffStart} to {$cutoffEnd}");
-
                 $sheet->getStyle("A{$cutoffRow}")->applyFromArray([
-                    'font' => ['bold' => true, 'size' => 12],
-                    'alignment' => [
-                        'horizontal' => Alignment::HORIZONTAL_CENTER,
-                        'vertical' => Alignment::VERTICAL_CENTER,
-                    ],
+                    'font'      => ['bold' => true, 'size' => 12],
+                    'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
                 ]);
 
-                // ---- DUAL HEADER ----
+                // ── Dual header ────────────────────────────────────────────────
                 $dateHeaderRow = $cutoffRow + 1;
                 $dayHeaderRow  = $dateHeaderRow + 1;
 
-                // Updated static headers including the new hidden columns
                 $staticHeaders = [
                     'Emp ID',
                     'Employee Name',
@@ -259,8 +261,8 @@ class EmployeeListSheet implements FromCollection, ShouldAutoSize, WithEvents
                     'Production Line',
                     'Team',
                     'Shift Type',
-                    'Supervisor ID',  // Hidden column
-                    'Approver2 ID'    // Hidden column
+                    'Supervisor ID',
+                    'Approver2 ID',
                 ];
 
                 foreach ($staticHeaders as $ci => $h) {
@@ -270,79 +272,125 @@ class EmployeeListSheet implements FromCollection, ShouldAutoSize, WithEvents
                 }
 
                 foreach ($this->days as $i => $day) {
-                    $col = $this->colLetter(self::INFO_COLS + $i);
-                    $sheet->setCellValue("{$col}{$dateHeaderRow}", date('d-M', strtotime($day)));
+                    $col     = $this->colLetter(self::INFO_COLS + $i);
+                    $holiday = $this->holidayMap[$day] ?? null;
+                    $label   = date('d-M', strtotime($day));
+                    if ($holiday) {
+                        $label .= ' ★';
+                    }
+                    $sheet->setCellValue("{$col}{$dateHeaderRow}", $label);
                     $sheet->setCellValue("{$col}{$dayHeaderRow}", date('D', strtotime($day)));
                 }
 
-                // Style headers
+                // Default header style
                 $sheet->getStyle("A{$dateHeaderRow}:{$lastCol}{$dayHeaderRow}")->applyFromArray([
-                    'font' => ['bold' => true, 'color' => ['rgb' => 'FFFFFF']],
-                    'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => '4472C4']],
-                    'alignment' => [
-                        'horizontal' => Alignment::HORIZONTAL_CENTER,
-                        'vertical' => Alignment::VERTICAL_CENTER,
-                    ],
+                    'font'      => ['bold' => true, 'color' => ['rgb' => 'FFFFFF']],
+                    'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => '4472C4']],
+                    'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
                 ]);
 
-                // Hide the Supervisor ID and Approver2 ID columns (columns G and H)
-                $sheet->getColumnDimension('G')->setVisible(false);  // Supervisor ID
-                $sheet->getColumnDimension('H')->setVisible(false);  // Approver2 ID
+                // Override holiday date columns with their color
+                foreach ($this->days as $i => $day) {
+                    $holiday = $this->holidayMap[$day] ?? null;
+                    if (!$holiday) continue;
+                    $col     = $this->colLetter(self::INFO_COLS + $i);
+                    $hexBg   = ltrim($holiday['color'], '#');
+                    $sheet->getStyle("{$col}{$dateHeaderRow}:{$col}{$dayHeaderRow}")->applyFromArray([
+                        'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => $hexBg]],
+                        'font' => ['bold' => true, 'color' => ['rgb' => $this->contrastColor($hexBg)]],
+                    ]);
+                }
 
-                // ---- DATA ----
+                // Hide supervisor/approver columns
+                $sheet->getColumnDimension('G')->setVisible(false);
+                $sheet->getColumnDimension('H')->setVisible(false);
+
+                // ── Data rows ──────────────────────────────────────────────────
                 $dataStartRow = $dayHeaderRow + 1;
-                $row = $dataStartRow;
+                $row          = $dataStartRow;
 
                 if (!empty($this->employeeIds)) {
-                    $employees = $this->hris->fetchEmployeesBulk($this->employeeIds);
-
-                    // Fetch approvers for each employee if needed
+                    $employees      = $this->hris->fetchEmployeesBulk($this->employeeIds);
                     $approversCache = [];
 
                     foreach ($this->employeeIds as $empId) {
                         $emp  = $employees[$empId] ?? [];
-                        $work = $this->hris->fetchWorkDetails((int)$empId);
+                        $work = $this->hris->fetchWorkDetails((int) $empId);
 
-                        // Get supervisor_id and approver2_id for this employee
-                        // You can get this from your direct reports data or HRIS
                         $supervisorId = $work['supervisor_id'] ?? null;
-                        $approver2Id = null;
+                        $approver2Id  = null;
 
-                        // Fetch approvers if not cached
                         if (!isset($approversCache[$empId])) {
-                            $approvers = $this->hris->fetchApprovers((int)$empId);
+                            $approvers = $this->hris->fetchApprovers((int) $empId);
                             if ($approvers) {
                                 $supervisorId = $approvers['approver1_id'] ?? $supervisorId;
-                                $approver2Id = $approvers['approver2_id'] ?? null;
+                                $approver2Id  = $approvers['approver2_id'] ?? null;
                             }
-                            $approversCache[$empId] = [
-                                'supervisor_id' => $supervisorId,
-                                'approver2_id' => $approver2Id
-                            ];
+                            $approversCache[$empId] = compact('supervisorId', 'approver2Id');
                         } else {
-                            $supervisorId = $approversCache[$empId]['supervisor_id'];
-                            $approver2Id = $approversCache[$empId]['approver2_id'];
+                            $supervisorId = $approversCache[$empId]['supervisorId'];
+                            $approver2Id  = $approversCache[$empId]['approver2Id'];
                         }
 
                         $sheet->setCellValue("A{$row}", $empId);
-                        $sheet->setCellValue("B{$row}", $emp['emp_name'] ?? '');
+                        $sheet->setCellValue("B{$row}", $emp['emp_name']   ?? '');
                         $sheet->setCellValue("C{$row}", $emp['department'] ?? '');
-                        $sheet->setCellValue("D{$row}", $emp['prodline'] ?? '');
-                        $sheet->setCellValue("E{$row}", $work['team'] ?? '');
+                        $sheet->setCellValue("D{$row}", $emp['prodline']   ?? '');
+                        $sheet->setCellValue("E{$row}", $work['team']       ?? '');
                         $sheet->setCellValue("F{$row}", $work['shift_type'] ?? '');
-                        $sheet->setCellValue("G{$row}", $supervisorId ?? '');     // Hidden
-                        $sheet->setCellValue("H{$row}", $approver2Id ?? '');       // Hidden
+                        $sheet->setCellValue("G{$row}", $supervisorId ?? '');
+                        $sheet->setCellValue("H{$row}", $approver2Id  ?? '');
+
+
+                        // ── Auto-fill for team_id=1 & shift_type_id=1 ─────────
+                        $teamId      = (int) ($work['team_id']       ?? $work['team']       ?? 0);
+                        $shiftTypeId = (int) ($work['shift_type_id'] ?? $work['shift_type'] ?? 0);
+
+                        if ($teamId === self::AUTO_TEAM_ID && $shiftTypeId === self::AUTO_SHIFT_TYPE_ID) {
+                            foreach ($this->days as $i => $day) {
+                                $isWeekend = in_array(date('N', strtotime($day)), [6, 7]);
+                                $isHoliday = isset($this->holidayMap[$day]);
+
+                                if ($isHoliday && !$isWeekend && $scHolidayWeekday) {
+                                    $value      = $scHolidayWeekday;
+                                    $shiftCodeId = self::SC_HOLIDAY_WEEKDAY;
+                                } elseif ($isWeekend && $scWeekend) {
+                                    $value      = $scWeekend;
+                                    $shiftCodeId = self::SC_WEEKEND;
+                                } elseif (!$isWeekend && $scWeekday) {
+                                    $value      = $scWeekday;
+                                    $shiftCodeId = self::SC_WEEKDAY;
+                                } else {
+                                    continue;
+                                }
+
+                                $col = $this->colLetter(self::INFO_COLS + $i);
+                                $sheet->setCellValue("{$col}{$row}", $value);
+
+                                // ── Apply shift code colors ───────────────────────────
+                                $shiftModel = $this->shiftCodes->firstWhere('shift_code_id', $shiftCodeId)
+                                    ?? ShiftCode::find($shiftCodeId);
+
+                                if ($shiftModel) {
+                                    $bg   = ltrim($shiftModel->shiftcode_bg_color,   '#') ?: 'FFFFFF';
+                                    $font = ltrim($shiftModel->shiftcode_font_color, '#') ?: '000000';
+                                    $sheet->getStyle("{$col}{$row}")->applyFromArray([
+                                        'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => $bg]],
+                                        'font' => ['bold' => true, 'color' => ['rgb' => $font]],
+                                    ]);
+                                }
+                            }
+                        }
 
                         $row++;
                     }
                 }
 
-                // ---- FREEZE ----
-                // Freeze from column I (which is column index 8, since A-H are 0-7)
+                // ── Freeze pane ───────────────────────────────────────────────
                 $freezeColumn = $this->colLetter(self::INFO_COLS);
                 $sheet->freezePane($freezeColumn . $dataStartRow);
 
-                // ---- WIDTHS ----
+                // ── Column widths ─────────────────────────────────────────────
                 $sheet->getColumnDimension('A')->setWidth(12);
                 $sheet->getColumnDimension('B')->setWidth(28);
                 $sheet->getColumnDimension('C')->setWidth(20);
@@ -359,11 +407,45 @@ class EmployeeListSheet implements FromCollection, ShouldAutoSize, WithEvents
         ];
     }
 
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /**
+     * Resolve the shiftcode string (e.g. "N", "D") for a given shift_code_id PK.
+     * Returns null if the code does not exist.
+     */
+    private function getShiftCodeString(int $shiftCodeId): ?string
+    {
+        // Check in the already-loaded collection first
+        $found = $this->shiftCodes->firstWhere('shift_code_id', $shiftCodeId);
+        if ($found) {
+            return $found->shiftcode;
+        }
+        // Fallback: query directly (the code might be outside the filtered set)
+        $model = ShiftCode::find($shiftCodeId);
+        return $model?->shiftcode;
+    }
+
+    /**
+     * Return '000000' (black) or 'FFFFFF' (white) depending on background luminance.
+     */
+    private function contrastColor(string $hex): string
+    {
+        $hex = ltrim($hex, '#');
+        if (strlen($hex) === 3) {
+            $hex = $hex[0] . $hex[0] . $hex[1] . $hex[1] . $hex[2] . $hex[2];
+        }
+        $r = hexdec(substr($hex, 0, 2)) / 255;
+        $g = hexdec(substr($hex, 2, 2)) / 255;
+        $b = hexdec(substr($hex, 4, 2)) / 255;
+        $luminance = 0.2126 * $r + 0.7152 * $g + 0.0722 * $b;
+        return $luminance > 0.5 ? '000000' : 'FFFFFF';
+    }
+
     private function colLetter(int $index): string
     {
         $col = '';
         while ($index >= 0) {
-            $col = chr(65 + ($index % 26)) . $col;
+            $col   = chr(65 + ($index % 26)) . $col;
             $index = intdiv($index, 26) - 1;
         }
         return $col;
@@ -375,9 +457,9 @@ class EmployeeListSheet implements FromCollection, ShouldAutoSize, WithEvents
 // -----------------------------------------------------------------------------
 class ShiftCodesReferenceSheet implements FromCollection, ShouldAutoSize, WithEvents
 {
-    private $shiftCodes;
+    private Collection $shiftCodes;
 
-    public function __construct($shiftCodes)
+    public function __construct(Collection $shiftCodes)
     {
         $this->shiftCodes = $shiftCodes;
     }
@@ -414,15 +496,12 @@ class ShiftCodesReferenceSheet implements FromCollection, ShouldAutoSize, WithEv
                 $row = 2;
                 foreach ($this->shiftCodes as $code) {
                     if (empty($code->shiftcode)) continue;
-
                     $bg   = ltrim($code->shiftcode_bg_color,   '#') ?: 'FFFFFF';
                     $font = ltrim($code->shiftcode_font_color, '#') ?: '000000';
-
                     $sheet->getStyle("A{$row}:E{$row}")->applyFromArray([
                         'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => $bg]],
                         'font' => ['bold' => true, 'color' => ['rgb' => $font]],
                     ]);
-
                     $row++;
                 }
 

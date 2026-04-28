@@ -88,7 +88,7 @@ class WorkScheduleController extends Controller
         );
 
         return Excel::download(
-            new WorkScheduleTemplateExport($ctx['cutoffId'], $ctx['employeeIds'], $ctx['prodLine']),
+            new WorkScheduleTemplateExport($ctx['cutoffId'], $ctx['employeeIds'], $ctx['prodLine'], $ctx['holidays']),
             $ctx['filename']
         );
     }

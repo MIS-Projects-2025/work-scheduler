@@ -56,7 +56,12 @@ class WorkScheduleService
         $dateTo   = date('Ymd', strtotime($cutoff->payroll_date_end));
         $filename = "schedule_template_{$dateFrom}_to_{$dateTo}_{$empId}.xlsx";
 
-        return compact('cutoff', 'employeeIds', 'prodLine', 'filename', 'cutoffId');
+        $holidays = $this->repo->getHolidaysForPeriod(
+            $cutoff->payroll_date_start,
+            $cutoff->payroll_date_end
+        );
+
+        return compact('cutoff', 'employeeIds', 'prodLine', 'filename', 'cutoffId', 'holidays');
     }
 
     // -------------------------------------------------------------------------
@@ -146,7 +151,8 @@ class WorkScheduleService
         string $search,
         int    $status
     ): array {
-        $shiftCodes = $this->repo->getAllActiveShiftCodes();
+        $shiftCodes   = $this->repo->getAllActiveShiftCodes();
+        $holidayItems = $this->repo->getHolidaysForPeriod($dateStart, $dateEnd);
 
         $schedulesQuery = $this->repo->getSchedulesByGroupQueryForHr($dateStart, $dateEnd, $status);
 
@@ -205,6 +211,13 @@ class WorkScheduleService
             'to'          => $paginatedSchedules->lastItem(),
         ];
 
+        $holidays = $holidayItems->map(fn($h) => [
+            'date'  => $h->holiday_date instanceof \Carbon\Carbon ? $h->holiday_date->format('Y-m-d') : (string) $h->holiday_date,
+            'name'  => $h->holiday_name,
+            'type'  => $h->holiday_type,
+            'color' => $h->color ?? '#FF5733',
+        ])->values()->toArray();
+
         return [
             'groupedData' => [[
                 'created_by'         => null,
@@ -236,6 +249,7 @@ class WorkScheduleService
                 'status'      => $status,
                 'empId'       => null,
             ],
+            'holidays' => $holidays,
         ];
     }
 
@@ -487,6 +501,7 @@ class WorkScheduleService
         int $status
     ): array {
         $shiftCodes = $this->getShiftCodesForManager($managerEmpId);
+        $holidayItems = $this->repo->getHolidaysForPeriod($dateStart, $dateEnd);
 
         // Get paginated schedules
         $schedulesQuery = $this->repo->getSchedulesByGroupQuery($createdBy, $dateStart, $dateEnd, $status, $managerEmpId);
@@ -579,7 +594,15 @@ class WorkScheduleService
             ->exists();
 
         $isOwnRecord = !$isCreator && !$isApprover;
-        $canApprove = ($isApprover && $status === 1);
+        $canApprove  = ($isApprover && $status === 1);
+
+        $holidays = $holidayItems->map(fn($h) => [
+            'date'  => $h->holiday_date instanceof \Carbon\Carbon ? $h->holiday_date->format('Y-m-d') : (string) $h->holiday_date,
+            'name'  => $h->holiday_name,
+            'type'  => $h->holiday_type,
+            'color' => $h->color ?? '#FF5733',
+        ])->values()->toArray();
+
         return [
             'groupedData' => [[
                 'created_by'         => $createdBy,
@@ -610,6 +633,7 @@ class WorkScheduleService
                 'status'      => $status,
                 'empId'       => $managerEmpId,
             ],
+            'holidays' => $holidays,
         ];
     }
     // -------------------------------------------------------------------------

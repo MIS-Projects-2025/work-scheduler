@@ -30,6 +30,7 @@ export default function WorkScheduleView({
     dateEnd,
     filters = {},
     viewerContext = {},
+    holidays = [],
 }) {
     const {
         selectedRows,
@@ -255,6 +256,8 @@ export default function WorkScheduleView({
                                         selectedRows={selectedRows}
                                         onRowSelect={handleRowSelect}
                                         onSelectAll={handleSelectAll}
+                                        dateStart={dateStart}
+                                        holidays={holidays}
                                     />
 
                                     {paginationMeta &&
