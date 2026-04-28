@@ -4,6 +4,8 @@ import { toast } from "sonner";
 import { validateSchedules } from "../helpers/scheduleValidation";
 import {
     buildScheduleFromRow,
+    buildShiftMap,
+    buildShiftOptions,
     getPayrollPeriodDays,
 } from "../helpers/scheduleHelpers";
 import { router } from "@inertiajs/react";
@@ -32,33 +34,8 @@ export function useWorkSchedule({
     const [submitResult, setSubmitResult] = useState(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
 
-    const shiftMap = useMemo(() => {
-        const map = {};
-        (shifts || []).forEach((s) => {
-            let bgColor = s.shiftcode_bg_color;
-            let fontColor = s.shiftcode_font_color;
-            if (bgColor && /^[0-9A-Fa-f]{6}$/.test(bgColor))
-                bgColor = `#${bgColor}`;
-            if (fontColor && /^[0-9A-Fa-f]{6}$/.test(fontColor))
-                fontColor = `#${fontColor}`;
-            map[s.shiftcode] = {
-                id: s.shift_code_id,
-                bg: bgColor || "#FFFFFF",
-                color: fontColor || "#000000",
-                desc: s.shiftcode_desc || "",
-            };
-        });
-        return map;
-    }, [shifts]);
-
-    const shiftOptions = useMemo(
-        () =>
-            shifts.map((s) => ({
-                value: s.shiftcode,
-                label: `${s.shiftcode} - ${s.shiftcode_desc}`,
-            })),
-        [shifts],
-    );
+    const shiftMap = useMemo(() => buildShiftMap(shifts), [shifts]);
+    const shiftOptions = useMemo(() => buildShiftOptions(shifts), [shifts]);
 
     const formatDisplayDate = (dateStr) => {
         const [y, m, d] = dateStr.split("-").map(Number);

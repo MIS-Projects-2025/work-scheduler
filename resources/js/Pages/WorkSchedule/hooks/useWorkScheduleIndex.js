@@ -92,6 +92,7 @@ export function useWorkScheduleIndex({
     };
 
     const handleView = (row) => {
+        setLoading(true);
         router.get(route("workschedule.view"), {
             hash: btoa(
                 JSON.stringify({

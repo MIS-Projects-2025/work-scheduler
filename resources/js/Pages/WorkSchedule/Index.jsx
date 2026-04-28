@@ -157,17 +157,10 @@ export default function WorkScheduleIndex({
                         )}
 
                         {meta && (
-                            <div className="flex items-center justify-between text-sm text-muted-foreground">
-                                <span>
-                                    Showing {meta.from}–{meta.to} of{" "}
-                                    {meta.total} entries
-                                </span>
-                                <Pagination
-                                    currentPage={meta.current_page}
-                                    lastPage={meta.last_page}
-                                    onPageChange={handlePageChange}
-                                />
-                            </div>
+                            <Pagination
+                                meta={meta}
+                                onPageChange={handlePageChange}
+                            />
                         )}
                     </CardContent>
                 </Card>

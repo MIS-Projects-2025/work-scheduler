@@ -31,6 +31,7 @@ export const Combobox = ({
     style,
     allowCustomValue = true,
     loadOptions,
+    modal = false,
 }) => {
     const [open, setOpen] = useState(false);
     const [asyncOptions, setAsyncOptions] = useState([]);
@@ -126,6 +127,7 @@ export const Combobox = ({
     return (
         <Popover
             open={open}
+            modal={modal}
             onOpenChange={(o) => {
                 setOpen(o);
                 if (o) onFocus?.();

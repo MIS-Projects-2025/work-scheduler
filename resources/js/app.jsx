@@ -15,6 +15,10 @@ const appName = rawAppName
 
 createInertiaApp({
     title: (title) => `${title} - ${appName}`,
+    progress: {
+        color: "hsl(var(--primary))",
+        delay: 0,
+    },
     resolve: (name) =>
         resolvePageComponent(
             `./Pages/${name}.jsx`,

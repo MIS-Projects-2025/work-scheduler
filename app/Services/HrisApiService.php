@@ -318,4 +318,53 @@ class HrisApiService
 
         return true;
     }
+    /**
+     * Fetch names for multiple employees in a single bulk request.
+     *
+     * Calls POST /api/employees/names/bulk with { "emp_ids": [...] }
+     * Expected response:
+     *   {
+     *     "data": {
+     *       "<emp_id>": { "emp_id": 101, "emp_name": "Dela Cruz, Juan A." },
+     *       ...
+     *     }
+     *   }
+     *
+     * Returns a map of (int) emp_id → emp_name string.
+     * Missing or failed entries are omitted; falls back to empty array on error.
+     */
+    public function fetchEmployeeNamesBulk(array $empIds): array
+    {
+        if (empty($empIds)) {
+            return [];
+        }
+
+        try {
+            $response = Http::withHeaders([
+                'X-Internal-Key' => $this->key,
+            ])->post("{$this->baseUrl}/api/employees/names/bulk", [
+                'emp_ids' => array_values(array_unique($empIds)),
+            ]);
+
+            if ($response->failed()) {
+                Log::warning('HRIS fetchEmployeeNamesBulk failed', [
+                    'status'  => $response->status(),
+                    'emp_ids' => $empIds,
+                ]);
+                return [];
+            }
+
+            $data = $response->json('data') ?? [];
+            $map  = [];
+            foreach ($data as $id => $info) {
+                if (!is_array($info)) continue;
+                $map[(int) $id] = $info['emp_name'] ?? (string) $id;
+            }
+
+            return $map;
+        } catch (\Exception $e) {
+            Log::error("HRIS fetchEmployeeNamesBulk exception: {$e->getMessage()}", ['emp_ids' => $empIds]);
+            return [];
+        }
+    }
 }

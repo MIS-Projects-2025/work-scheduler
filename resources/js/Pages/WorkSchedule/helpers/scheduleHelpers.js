@@ -1,3 +1,38 @@
+/** Status map shared by Index table and View header. */
+export const SCHEDULE_STATUS = {
+    1: { label: "For Approval",   variant: "warning"     },
+    2: { label: "To Acknowledge", variant: "default"     },
+    3: { label: "Acknowledged",   variant: "success"     },
+    4: { label: "Disapproved",    variant: "destructive" },
+};
+
+/**
+ * Convert a raw shiftCodes array (from server) into a keyed lookup map.
+ * Used by both useWorkSchedule and useWorkScheduleView so it lives here.
+ */
+export const buildShiftMap = (shiftCodes = []) => {
+    const normalize = (hex) =>
+        hex && /^[0-9A-Fa-f]{6}$/.test(hex) ? `#${hex}` : hex || null;
+    return Object.fromEntries(
+        shiftCodes.map((s) => [
+            s.shiftcode,
+            {
+                id: s.shift_code_id,
+                bg: normalize(s.shiftcode_bg_color) ?? "#FFFFFF",
+                color: normalize(s.shiftcode_font_color) ?? "#000000",
+                desc: s.shiftcode_desc || "",
+            },
+        ]),
+    );
+};
+
+/** Convert a raw shiftCodes array into Combobox option objects. */
+export const buildShiftOptions = (shiftCodes = []) =>
+    shiftCodes.map((s) => ({
+        value: s.shiftcode,
+        label: `${s.shiftcode} - ${s.shiftcode_desc}`,
+    }));
+
 export const getPayrollPeriodDays = (startDate, endDate) => {
     const [sy, sm, sd] = startDate.split("-").map(Number);
     const [ey, em, ed] = endDate.split("-").map(Number);

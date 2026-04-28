@@ -85,7 +85,14 @@ class WorkScheduleService
             $page
         );
 
-        $enrichedItems = collect($paginator->items())->map(function ($item) {
+        $items = collect($paginator->items());
+
+        // Bulk-fetch all creator names in one HTTP call before mapping
+        $this->warmNameCache(
+            $items->pluck('created_by')->unique()->values()->all()
+        );
+
+        $enrichedItems = $items->map(function ($item) {
             $row = $item instanceof \Illuminate\Database\Eloquent\Model ? $item->toArray() : (array) $item;
 
             return array_merge($row, [
@@ -114,14 +121,30 @@ class WorkScheduleService
         return $result;
     }
 
-    private function getCreatorName(string $creatorId): string
+    private function warmNameCache(array $ids): void
     {
-        if (!isset($this->nameCache[$creatorId])) {
-            $this->nameCache[$creatorId] = $this->hris->fetchWorkDetails($creatorId)['emp_name'] ?? $creatorId;
+        $uncached = array_values(array_filter(
+            $ids,
+            fn($id) => !isset($this->nameCache[$id])
+        ));
+
+        if (empty($uncached)) {
+            return;
         }
 
-        return $this->nameCache[$creatorId];
+        $map = $this->hris->fetchEmployeeNamesBulk($uncached);
+
+        foreach ($uncached as $id) {
+            // Store fallback (the raw ID) for any IDs HRIS didn't return
+            $this->nameCache[$id] = $map[$id] ?? $id;
+        }
     }
+
+    private function getCreatorName(string $creatorId): string
+    {
+        return $this->nameCache[$creatorId] ?? $creatorId;
+    }
+
     /**
      * Submit schedules from template
      */
