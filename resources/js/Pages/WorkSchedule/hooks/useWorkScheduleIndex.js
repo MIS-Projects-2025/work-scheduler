@@ -6,6 +6,7 @@ export function useWorkScheduleIndex({
     initialSchedules,
     initialTabCounts,
     initialFilters,
+    isHrAdmin = false,
 }) {
     const [schedules, setSchedules] = useState(initialSchedules);
     const [tabCounts, setTabCounts] = useState(initialTabCounts);
@@ -93,18 +94,20 @@ export function useWorkScheduleIndex({
 
     const handleView = (row) => {
         setLoading(true);
+        const params = {
+            date_start: row.payroll_date_start,
+            date_end: row.payroll_date_end,
+            status: row.work_sched_status,
+            perPage: 20,
+            page: 1,
+            search: "",
+        };
+        // HR admin rows are grouped by cutoff only (no created_by)
+        if (!isHrAdmin) {
+            params.created_by = row.created_by;
+        }
         router.get(route("workschedule.view"), {
-            hash: btoa(
-                JSON.stringify({
-                    created_by: row.created_by,
-                    date_start: row.payroll_date_start,
-                    date_end: row.payroll_date_end,
-                    status: row.work_sched_status,
-                    perPage: 20,
-                    page: 1,
-                    search: "",
-                }),
-            ),
+            hash: btoa(JSON.stringify(params)),
         });
     };
 

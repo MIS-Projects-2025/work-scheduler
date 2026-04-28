@@ -9,15 +9,60 @@ import {
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { AlertTriangle, ThumbsUp, ThumbsDown, Loader2 } from "lucide-react";
+import {
+    AlertTriangle,
+    ThumbsUp,
+    ThumbsDown,
+    CheckCheck,
+    Loader2,
+} from "lucide-react";
+
+const ACTION_CONFIG = {
+    approve: {
+        title: "Approve Schedules",
+        icon: <ThumbsUp className="w-5 h-5 text-green-600" />,
+        remarksRequired: false,
+        remarksPlaceholder: "Optional remarks…",
+        confirmLabel: "Confirm Approve",
+        confirmIcon: <ThumbsUp className="w-4 h-4 mr-2" />,
+        confirmClass: "bg-green-600 hover:bg-green-700 text-white",
+        confirmVariant: "default",
+        description: (n) =>
+            `Approving ${n} employee schedule${n !== 1 ? "s" : ""}. Remarks are optional.`,
+    },
+    disapprove: {
+        title: "Disapprove Schedules",
+        icon: <AlertTriangle className="w-5 h-5 text-destructive" />,
+        remarksRequired: true,
+        remarksPlaceholder: "Enter reason for disapproval…",
+        confirmLabel: "Confirm Disapprove",
+        confirmIcon: <ThumbsDown className="w-4 h-4 mr-2" />,
+        confirmClass: "",
+        confirmVariant: "destructive",
+        description: (n) =>
+            `Disapproving ${n} employee schedule${n !== 1 ? "s" : ""}. Please provide a reason.`,
+    },
+    acknowledge: {
+        title: "Acknowledge Schedule",
+        icon: <CheckCheck className="w-5 h-5 text-green-600" />,
+        remarksRequired: false,
+        remarksPlaceholder: "Optional remarks…",
+        confirmLabel: "Confirm Acknowledge",
+        confirmIcon: <CheckCheck className="w-4 h-4 mr-2" />,
+        confirmClass: "bg-green-600 hover:bg-green-700 text-white",
+        confirmVariant: "default",
+        description: () =>
+            "You are acknowledging this work schedule. Remarks are optional.",
+    },
+};
 
 /**
- * Confirmation dialog for bulk approve / disapprove actions.
+ * Confirmation dialog for approve / disapprove / acknowledge actions.
  *
  * Props:
  *   open            boolean
- *   action          'approve' | 'disapprove' | null
- *   selectedCount   number
+ *   action          'approve' | 'disapprove' | 'acknowledge' | null
+ *   selectedCount   number   (ignored for acknowledge)
  *   remarks         string
  *   onRemarksChange (value: string) => void
  *   onConfirm       () => void
@@ -34,7 +79,11 @@ export default function RemarksDialog({
     onClose,
     processing,
 }) {
-    const isDisapprove = action === "disapprove";
+    const cfg = ACTION_CONFIG[action] ?? null;
+    if (!cfg) return null;
+
+    const remarksEmpty = !remarks.trim();
+    const disabled = processing || (cfg.remarksRequired && remarksEmpty);
 
     return (
         <Dialog
@@ -44,22 +93,11 @@ export default function RemarksDialog({
             <DialogContent className="sm:max-w-md">
                 <DialogHeader>
                     <DialogTitle className="flex items-center gap-2">
-                        {isDisapprove ? (
-                            <>
-                                <AlertTriangle className="w-5 h-5 text-destructive" />
-                                Disapprove Schedules
-                            </>
-                        ) : (
-                            <>
-                                <ThumbsUp className="w-5 h-5 text-green-600" />
-                                Approve Schedules
-                            </>
-                        )}
+                        {cfg.icon}
+                        {cfg.title}
                     </DialogTitle>
                     <DialogDescription>
-                        {isDisapprove
-                            ? `Disapproving ${selectedCount} employee schedule${selectedCount !== 1 ? "s" : ""}. Please provide a reason.`
-                            : `Approving ${selectedCount} employee schedule${selectedCount !== 1 ? "s" : ""}. Remarks are optional.`}
+                        {cfg.description(selectedCount)}
                     </DialogDescription>
                 </DialogHeader>
 
@@ -67,22 +105,18 @@ export default function RemarksDialog({
                     <div className="space-y-2">
                         <Label>
                             Remarks
-                            {isDisapprove && (
+                            {cfg.remarksRequired && (
                                 <span className="text-destructive ml-1">*</span>
                             )}
                         </Label>
                         <Textarea
-                            placeholder={
-                                isDisapprove
-                                    ? "Enter reason for disapproval…"
-                                    : "Optional remarks…"
-                            }
+                            placeholder={cfg.remarksPlaceholder}
                             value={remarks}
                             onChange={(e) => onRemarksChange(e.target.value)}
                             rows={3}
                             className="resize-none"
                         />
-                        {isDisapprove && !remarks.trim() && (
+                        {cfg.remarksRequired && remarksEmpty && (
                             <p className="text-xs text-destructive">
                                 Remarks are required for disapproval.
                             </p>
@@ -100,31 +134,19 @@ export default function RemarksDialog({
                     </Button>
                     <Button
                         onClick={onConfirm}
-                        disabled={
-                            processing ||
-                            (isDisapprove && !remarks.trim())
-                        }
-                        className={
-                            !isDisapprove
-                                ? "bg-green-600 hover:bg-green-700 text-white"
-                                : ""
-                        }
-                        variant={isDisapprove ? "destructive" : "default"}
+                        disabled={disabled}
+                        className={cfg.confirmClass}
+                        variant={cfg.confirmVariant}
                     >
                         {processing ? (
                             <>
                                 <Loader2 className="w-4 h-4 animate-spin mr-2" />
                                 Processing...
                             </>
-                        ) : isDisapprove ? (
-                            <>
-                                <ThumbsDown className="w-4 h-4 mr-2" />
-                                Confirm Disapprove
-                            </>
                         ) : (
                             <>
-                                <ThumbsUp className="w-4 h-4 mr-2" />
-                                Confirm Approve
+                                {cfg.confirmIcon}
+                                {cfg.confirmLabel}
                             </>
                         )}
                     </Button>

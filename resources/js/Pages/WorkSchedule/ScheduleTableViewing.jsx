@@ -52,6 +52,7 @@ export default function ScheduleTableViewing({
         setSelectedShift,
         editedCount,
         getCellStyle,
+        getCellValue,
         isCellEdited,
         getHeaderName,
         previewStyle,
@@ -316,13 +317,14 @@ export default function ScheduleTableViewing({
                                     {/* Data cells */}
                                     {row.map((cell, colIdx) => {
                                         const sticky = colIdx < stickyColumns;
-                                        const readonly =
-                                            colIdx < readonlyCols;
+                                        const readonly = colIdx < readonlyCols;
+                                        // Use edited value if one exists for this cell
+                                        const displayValue = getCellValue(rowIdx, colIdx, cell);
                                         const isShiftCode =
                                             colIdx >= readonlyCols &&
-                                            cell &&
-                                            shiftMap[cell];
-                                        const style = getCellStyle(cell);
+                                            displayValue &&
+                                            shiftMap[displayValue];
+                                        const style = getCellStyle(displayValue);
                                         const hasStyle =
                                             style.backgroundColor !== null;
                                         const w = getColumnWidth(colIdx);
@@ -382,14 +384,14 @@ export default function ScheduleTableViewing({
                                                     onCellClick?.(
                                                         rowIdx,
                                                         colIdx,
-                                                        cell,
+                                                        displayValue,
                                                     )
                                                 }
                                                 onDoubleClick={() =>
                                                     openEditDialog(
                                                         rowIdx,
                                                         colIdx,
-                                                        cell,
+                                                        displayValue,
                                                     )
                                                 }
                                                 title={
@@ -399,13 +401,13 @@ export default function ScheduleTableViewing({
                                                           ? "Double-click to edit"
                                                           : isShiftCode
                                                             ? getShiftDesc(
-                                                                  cell,
+                                                                  displayValue,
                                                               )
                                                             : undefined
                                                 }
                                             >
                                                 {renderCell(
-                                                    cell,
+                                                    displayValue,
                                                     isShiftCode,
                                                     edited,
                                                 )}

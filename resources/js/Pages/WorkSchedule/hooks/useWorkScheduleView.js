@@ -28,6 +28,13 @@ export function useWorkScheduleView({
     const [legendCollapsed, setLegendCollapsed] = useState(false);
     const [search, setSearch] = useState(filters.search || "");
     const [perPage, setPerPage] = useState(filters.perPage || 20);
+    // Cell edits: "rowIdx-colIdx" → { emp_id, work_date, shift_code_id }
+    const [cellChanges, setCellChanges] = useState({});
+    const [tableResetKey, setTableResetKey] = useState(0);
+    const [submitProcessing, setSubmitProcessing] = useState(false);
+
+    // Number of static (non-date) columns — must match frozenColumns in View.jsx
+    const STATIC_COLS = 6;
 
     const isMounted = useRef(false);
 
@@ -39,10 +46,11 @@ export function useWorkScheduleView({
     const canEdit = !!isCreator && isCutoffActive;
 
     const currentGroup = groupedData[0] || {};
-    const data = currentGroup.schedules || [];
-    const headers = currentGroup.headers || [];
-    const subHeaders = currentGroup.subHeaders || [];
-    const createdBy = currentGroup.created_by || "";
+    const data        = currentGroup.schedules    || [];
+    const scheduleIds = currentGroup.scheduleIds  || [];   // rowIdx → WorkSchedule.id
+    const headers     = currentGroup.headers      || [];
+    const subHeaders  = currentGroup.subHeaders   || [];
+    const createdBy   = currentGroup.created_by   || "";
 
     // ── Shared shift helpers (same source as useWorkSchedule) ─────────────────
     const shiftMap = useMemo(() => buildShiftMap(shiftCodes), [shiftCodes]);
@@ -142,39 +150,63 @@ export function useWorkScheduleView({
     }, []);
 
     // ── Actions ────────────────────────────────────────────────────────────────
-    const handleApprove = () => {
-        if (!confirm("Are you sure you want to approve this schedule?")) return;
-        router.post(
-            route("workschedule.approve"),
-            { created_by: createdBy, date_start: dateStart, date_end: dateEnd },
-            { onSuccess: () => visitView({ status: 2 }) },
-        );
+    const openDialog = (action) => {
+        setRemarks("");
+        setRemarksDialog({ open: true, action });
     };
 
-    const handleDisapprove = () => {
-        if (!confirm("Are you sure you want to disapprove this schedule?"))
-            return;
-        router.post(
-            route("workschedule.disapprove"),
-            { created_by: createdBy, date_start: dateStart, date_end: dateEnd },
-            { onSuccess: () => visitView({ status: 4 }) },
-        );
+    const closeDialog = () => {
+        if (bulkProcessing) return;
+        setRemarksDialog({ open: false, action: null });
     };
 
-    const handleAcknowledge = () => {
-        if (!confirm("Are you sure you want to acknowledge this schedule?"))
-            return;
-        setAcknowledging(true);
+    // ── Cell edits (status=1, creator only) ───────────────────────────────────
+    const handleCellChange = useCallback((rowIdx, colIdx, value) => {
+        const workScheduleId = scheduleIds[rowIdx];
+        const dayOffset      = colIdx - STATIC_COLS;
+        if (!workScheduleId || dayOffset < 0) return;
+
+        const workDate    = dayjs(dateStart).add(dayOffset, "day").format("YYYY-MM-DD");
+        const shiftCodeId = shiftMap[value]?.id ?? null;
+        const key         = `${rowIdx}-${colIdx}`;
+
+        setCellChanges((prev) => ({
+            ...prev,
+            [key]: { work_schedule_id: workScheduleId, work_date: workDate, shift_code_id: shiftCodeId },
+        }));
+    }, [scheduleIds, dateStart, shiftMap, STATIC_COLS]);
+
+    const handleResetEdits = useCallback(() => {
+        setCellChanges({});
+        setTableResetKey((k) => k + 1);
+    }, []);
+
+    const handleSubmitEdits = useCallback(() => {
+        const changes = Object.values(cellChanges);
+        if (changes.length === 0) return;
+
+        setSubmitProcessing(true);
         router.post(
-            route("workschedule.acknowledge"),
-            { created_by: createdBy, date_start: dateStart, date_end: dateEnd },
+            route("workschedule.save-edits"),
+            { date_start: dateStart, date_end: dateEnd, changes },
             {
-                onSuccess: () => visitView({ status: 3 }),
-                onError: () => setAcknowledging(false),
-                onFinish: () => setAcknowledging(false),
+                onSuccess: () => {
+                    // Clear the parent's change map (hides the save/reset bar)
+                    setCellChanges({});
+                    // Increment key → ScheduleTableViewing remounts →
+                    // useCellEdit's cellEdits/localEditedCells reset to empty,
+                    // so fresh server values show instead of the stale overrides.
+                    setTableResetKey((k) => k + 1);
+                    // Do NOT call navigate() here — back() from the controller
+                    // already triggered a full Inertia visit with refreshed props.
+                },
+                onError:  () => setSubmitProcessing(false),
+                onFinish: () => setSubmitProcessing(false),
             },
         );
-    };
+    }, [cellChanges, dateStart, dateEnd]);
+
+    const editedCellCount = Object.keys(cellChanges).length;
 
     // ── Selection & bulk actions ───────────────────────────────────────────────
     const handleRowSelect = (rowIdx, checked) => {
@@ -193,20 +225,40 @@ export function useWorkScheduleView({
 
     const openBulkAction = (action) => {
         if (selectedRows.size === 0) return;
-        setRemarks("");
-        setRemarksDialog({ open: true, action });
+        openDialog(action);
     };
 
-    const handleBulkConfirm = () => {
-        if (remarksDialog.action === "disapprove" && !remarks.trim()) return;
+    const handleConfirm = () => {
+        const { action } = remarksDialog;
+        if (action === "disapprove" && !remarks.trim()) return;
+
         setBulkProcessing(true);
 
+        if (action === "acknowledge") {
+            setAcknowledging(true);
+            router.post(
+                route("workschedule.acknowledge"),
+                { created_by: createdBy, date_start: dateStart, date_end: dateEnd },
+                {
+                    onSuccess: () => {
+                        closeDialog();
+                        visitView({ status: 3 });
+                    },
+                    onError: () => {
+                        setAcknowledging(false);
+                        setBulkProcessing(false);
+                    },
+                    onFinish: () => setAcknowledging(false),
+                },
+            );
+            return;
+        }
+
+        const routeName = action === "approve"
+            ? "workschedule.approve"
+            : "workschedule.disapprove";
+        const targetStatus = action === "approve" ? 2 : 4;
         const selectedEmpIds = [...selectedRows].map((idx) => data[idx][0]);
-        const routeName =
-            remarksDialog.action === "approve"
-                ? "workschedule.approve"
-                : "workschedule.disapprove";
-        const targetStatus = remarksDialog.action === "approve" ? 2 : 4;
 
         router.post(
             route(routeName),
@@ -219,7 +271,7 @@ export function useWorkScheduleView({
             },
             {
                 onSuccess: () => {
-                    setRemarksDialog({ open: false, action: null });
+                    closeDialog();
                     setSelectedRows(new Set());
                     visitView({ status: targetStatus });
                 },
@@ -276,15 +328,21 @@ export function useWorkScheduleView({
         shiftMap,
         shiftOptions,
         paginationMeta,
+        // cell edit handlers
+        tableResetKey,
+        editedCellCount,
+        submitProcessing,
+        handleCellChange,
+        handleResetEdits,
+        handleSubmitEdits,
         // handlers
         toggleFullscreen,
-        handleApprove,
-        handleDisapprove,
-        handleAcknowledge,
         handleRowSelect,
         handleSelectAll,
         openBulkAction,
-        handleBulkConfirm,
+        openDialog,
+        closeDialog,
+        handleConfirm,
         goToPage,
     };
 }

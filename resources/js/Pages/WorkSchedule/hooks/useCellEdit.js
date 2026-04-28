@@ -27,9 +27,9 @@ export function useCellEdit({
         originalValue: "",
     });
     const [selectedShift, setSelectedShift] = useState("");
-    const [localEditedCells, setLocalEditedCells] = useState(
-        externalEditedCells,
-    );
+    const [localEditedCells, setLocalEditedCells] = useState(externalEditedCells);
+    // Stores edited values so cells display the new value without a server round-trip
+    const [cellEdits, setCellEdits] = useState({});
 
     const editedCount = localEditedCells.size;
 
@@ -69,16 +69,26 @@ export function useCellEdit({
     };
 
     const saveEdit = () => {
-        if (onCellChange && editable && selectedShift !== undefined) {
-            const cellKey = `${editingCell.rowIndex}-${editingCell.colIndex}`;
-            setLocalEditedCells((prev) => new Set([...prev, cellKey]));
-            onCellChange(
-                editingCell.rowIndex,
-                editingCell.colIndex,
-                selectedShift,
-            );
-        }
+        if (!editable) { closeEditDialog(); return; }
+
+        const cellKey = `${editingCell.rowIndex}-${editingCell.colIndex}`;
+
+        // Always track the edit and update the displayed value locally
+        setLocalEditedCells((prev) => new Set([...prev, cellKey]));
+        setCellEdits((prev) => ({ ...prev, [cellKey]: selectedShift }));
+
+        // Notify parent if a callback was provided (e.g. Template page)
+        onCellChange?.(editingCell.rowIndex, editingCell.colIndex, selectedShift);
+
         closeEditDialog();
+    };
+
+    /** Returns the edited value for a cell if one exists, otherwise the original. */
+    const getCellValue = (rowIdx, colIdx, original) => {
+        const key = `${rowIdx}-${colIdx}`;
+        return Object.prototype.hasOwnProperty.call(cellEdits, key)
+            ? cellEdits[key]
+            : original;
     };
 
     const getHeaderName = () =>
@@ -94,6 +104,7 @@ export function useCellEdit({
         setSelectedShift,
         editedCount,
         getCellStyle,
+        getCellValue,
         isCellEdited,
         getHeaderName,
         previewStyle,

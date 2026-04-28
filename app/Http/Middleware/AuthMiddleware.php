@@ -102,6 +102,7 @@ class AuthMiddleware
         }
 
         $userId = $currentUser->emp_id;
+        $role = (int) $currentUser->emp_id === 0 ? 'hr_admin' : 'user';
 
         Log::info('User roles fetched', ['emp_id' => $userId]);
 
@@ -119,7 +120,7 @@ class AuthMiddleware
             'emp_station_id'   => $currentUser->emp_station_id,
             'shift_type'       => $currentUser->shift_type ?? null,
             'team'             => $currentUser->team ?? null,
-
+            'emp_system_role' => $role ?? null,
             'generated_at'   => $currentUser->generated_at,
         ]]);
 

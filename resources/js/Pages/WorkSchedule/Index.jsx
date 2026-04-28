@@ -33,6 +33,7 @@ export default function WorkScheduleIndex({
     tabCounts: initialTabCounts = {},
     filters: initialFilters = {},
     empPosition = 0,
+    isHrAdmin = false,
 }) {
     const {
         schedules,
@@ -53,6 +54,7 @@ export default function WorkScheduleIndex({
         initialSchedules,
         initialTabCounts,
         initialFilters,
+        isHrAdmin,
     });
 
     const rows = schedules?.data || [];
@@ -153,6 +155,7 @@ export default function WorkScheduleIndex({
                                 orderDir={orderDir}
                                 onSort={handleSort}
                                 onView={handleView}
+                                isHrAdmin={isHrAdmin}
                             />
                         )}
 

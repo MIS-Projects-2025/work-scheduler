@@ -23,11 +23,11 @@ class WorkScheduleController extends Controller
     {
         $empId       = session('emp_data.emp_id');
         $empPosition = (int) session('emp_data.emp_position', 0);
-
+        $isHrAdmin = (string) session('emp_data.emp_system_role') === 'hr_admin';
         // ── TODO: replace with your actual HR admin check ─────────────────────
-        $isHrAdmin = false;
+        // $isHrAdmin = false;
         // ─────────────────────────────────────────────────────────────────────
-
+        // dd($empId, $empPosition, $isHrAdmin);
         $filters = [];
         if ($hash = $request->input('hash')) {
             try {
@@ -135,7 +135,7 @@ class WorkScheduleController extends Controller
             }
         }
 
-        // Read from decoded hash directly, not from $request
+        $isHrAdmin = (string) session('emp_data.emp_system_role') === 'hr_admin';
         $createdBy = $filters['created_by'] ?? null;
         $dateStart  = $filters['date_start'] ?? null;
         $dateEnd    = $filters['date_end'] ?? null;
@@ -144,8 +144,24 @@ class WorkScheduleController extends Controller
         $page       = (int) ($filters['page'] ?? 1);
         $search     = (string) ($filters['search'] ?? '');
 
-        // Validate decoded values manually
-        if (!$createdBy || !$dateStart || !$dateEnd || $status === null) {
+        if (!$dateStart || !$dateEnd || $status === null) {
+            return redirect()->route('workschedule.index');
+        }
+
+        // HR admin: show all employees for the cutoff, regardless of creator
+        if ($isHrAdmin && !$createdBy) {
+            return inertia('WorkSchedule/View', $this->service->getHrViewData(
+                $dateStart,
+                $dateEnd,
+                $perPage,
+                $page,
+                $search,
+                $status
+            ));
+        }
+
+        // Regular user (or HR admin drilling into a specific creator's group)
+        if (!$createdBy) {
             return redirect()->route('workschedule.index');
         }
 
@@ -185,6 +201,26 @@ class WorkScheduleController extends Controller
         }
 
         return response()->json(['cutoff' => $cutoff, 'days' => $days]);
+    }
+
+    public function saveEdits(Request $request)
+    {
+        $request->validate([
+            'date_start'                   => 'required|date',
+            'date_end'                     => 'required|date',
+            'changes'                      => 'required|array|min:1',
+            'changes.*.work_schedule_id'   => 'required|integer|exists:work_schedule,id',
+            'changes.*.work_date'          => 'required|date',
+            'changes.*.shift_code_id'      => 'nullable|integer|exists:shift_codes,shift_code_id',
+        ]);
+
+        $result = $this->service->saveScheduleEdits(
+            $request->input('date_start'),
+            $request->input('date_end'),
+            $request->input('changes')
+        );
+
+        return back()->with('editResult', $result);
     }
 
     public function acknowledge(Request $request)

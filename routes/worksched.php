@@ -35,4 +35,5 @@ Route::prefix('work-schedule')->name('workschedule.')->group(function () {
     Route::post('/acknowledge', [WorkScheduleController::class, 'acknowledge'])->name('acknowledge');
     Route::post('/approve',    [WorkScheduleController::class, 'approve'])->name('approve');
     Route::post('/disapprove', [WorkScheduleController::class, 'disapprove'])->name('disapprove');
+    Route::post('/save-edits', [WorkScheduleController::class, 'saveEdits'])->name('save-edits');
 });

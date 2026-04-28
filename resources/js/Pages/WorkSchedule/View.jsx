@@ -1,7 +1,7 @@
 import AuthenticatedLayout from "@/Layouts/AuthenticatedLayout";
 import { Head } from "@inertiajs/react";
 import dayjs from "dayjs";
-import { Loader2, Search, CheckCheck } from "lucide-react";
+import { Loader2, Search, CheckCheck, RotateCcw, Save } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,7 +34,6 @@ export default function WorkScheduleView({
     const {
         selectedRows,
         remarksDialog,
-        setRemarksDialog,
         remarks,
         setRemarks,
         bulkProcessing,
@@ -58,12 +57,19 @@ export default function WorkScheduleView({
         shiftMap,
         shiftOptions,
         paginationMeta,
+        tableResetKey,
+        editedCellCount,
+        submitProcessing,
+        handleCellChange,
+        handleResetEdits,
+        handleSubmitEdits,
         toggleFullscreen,
-        handleAcknowledge,
         handleRowSelect,
         handleSelectAll,
         openBulkAction,
-        handleBulkConfirm,
+        openDialog,
+        closeDialog,
+        handleConfirm,
         goToPage,
     } = useWorkScheduleView({
         groupedData,
@@ -118,7 +124,7 @@ export default function WorkScheduleView({
                                 {canAcknowledge && (
                                     <Button
                                         size="sm"
-                                        onClick={handleAcknowledge}
+                                        onClick={() => openDialog("acknowledge")}
                                         disabled={acknowledging}
                                         className="gap-2 bg-green-600 hover:bg-green-700 text-white"
                                     >
@@ -194,7 +200,42 @@ export default function WorkScheduleView({
                                 </div>
                             ) : (
                                 <>
+                                    {/* Reset / Submit bar — visible when there are unsaved edits */}
+                                    {canEdit && editedCellCount > 0 && (
+                                        <div className="flex items-center justify-between gap-3 rounded-md border border-yellow-300 bg-yellow-50 dark:bg-yellow-950/20 dark:border-yellow-800 px-4 py-2">
+                                            <span className="text-sm text-yellow-800 dark:text-yellow-300 font-medium">
+                                                {editedCellCount} cell{editedCellCount !== 1 ? "s" : ""} edited — unsaved changes
+                                            </span>
+                                            <div className="flex items-center gap-2">
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    onClick={handleResetEdits}
+                                                    disabled={submitProcessing}
+                                                    className="gap-1.5"
+                                                >
+                                                    <RotateCcw className="w-3.5 h-3.5" />
+                                                    Reset
+                                                </Button>
+                                                <Button
+                                                    size="sm"
+                                                    onClick={handleSubmitEdits}
+                                                    disabled={submitProcessing}
+                                                    className="gap-1.5 bg-primary hover:bg-primary/90 text-primary-foreground"
+                                                >
+                                                    {submitProcessing ? (
+                                                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                                    ) : (
+                                                        <Save className="w-3.5 h-3.5" />
+                                                    )}
+                                                    {submitProcessing ? "Saving..." : "Save Changes"}
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    )}
+
                                     <ScheduleTableViewing
+                                        key={tableResetKey}
                                         data={data}
                                         headers={headers}
                                         subHeaders={subHeaders}
@@ -209,6 +250,7 @@ export default function WorkScheduleView({
                                         }
                                         showHeader={true}
                                         editable={canEdit}
+                                        onCellChange={handleCellChange}
                                         selectable={canApprove}
                                         selectedRows={selectedRows}
                                         onRowSelect={handleRowSelect}
@@ -230,17 +272,15 @@ export default function WorkScheduleView({
                 )}
             </div>
 
-            {/* Bulk-action confirmation dialog */}
+            {/* Action confirmation dialog (approve / disapprove / acknowledge) */}
             <RemarksDialog
                 open={remarksDialog.open}
                 action={remarksDialog.action}
                 selectedCount={selectedRows.size}
                 remarks={remarks}
                 onRemarksChange={setRemarks}
-                onConfirm={handleBulkConfirm}
-                onClose={() =>
-                    setRemarksDialog({ open: false, action: null })
-                }
+                onConfirm={handleConfirm}
+                onClose={closeDialog}
                 processing={bulkProcessing}
             />
         </div>

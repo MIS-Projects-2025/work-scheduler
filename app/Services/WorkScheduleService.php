@@ -121,8 +121,9 @@ class WorkScheduleService
             $page
         );
 
+        // HR rows are grouped by cutoff only (no created_by), so no name enrichment needed.
         $result = [
-            'paginator' => $this->enrichPaginator($paginator),
+            'paginator' => $paginator,
             'tabCounts' => [],
         ];
 
@@ -131,6 +132,111 @@ class WorkScheduleService
         }
 
         return $result;
+    }
+
+    // -------------------------------------------------------------------------
+    // HR Admin view — all employees for a cutoff, regardless of creator
+    // -------------------------------------------------------------------------
+
+    public function getHrViewData(
+        string $dateStart,
+        string $dateEnd,
+        int    $perPage,
+        int    $page,
+        string $search,
+        int    $status
+    ): array {
+        $shiftCodes = $this->repo->getAllActiveShiftCodes();
+
+        $schedulesQuery = $this->repo->getSchedulesByGroupQueryForHr($dateStart, $dateEnd, $status);
+
+        if (!empty($search)) {
+            $schedulesQuery->where('emp_id', 'like', "%{$search}%");
+        }
+
+        $paginatedSchedules = $schedulesQuery->paginate($perPage, ['*'], 'page', $page);
+
+        $employeeIds = $paginatedSchedules->pluck('emp_id')->toArray();
+        $employees   = $this->hris->fetchEmployeesBulk($employeeIds);
+
+        $daysInPeriod  = $this->buildDateRange($dateStart, $dateEnd);
+        $staticHeaders = ['Emp ID', 'Employee Name', 'Department', 'Production Line', 'Team', 'Shift Type'];
+
+        $dateHeaders = array_map(fn($d) => (new \DateTime($d))->format('d-M'), $daysInPeriod);
+        $dayHeaders  = array_map(fn($d) => strtoupper(substr((new \DateTime($d))->format('l'), 0, 3)), $daysInPeriod);
+
+        $firstRowHeaders  = array_merge($staticHeaders, $dateHeaders);
+        $secondRowHeaders = array_merge(array_fill(0, count($staticHeaders), ''), $dayHeaders);
+
+        $scheduleIds = [];
+        $rows        = [];
+
+        foreach ($paginatedSchedules->items() as $schedule) {
+            $daysMap = [];
+            foreach ($schedule->days as $day) {
+                $daysMap[$day->work_date] = $day->shiftCode?->shiftcode ?? '';
+            }
+
+            $empData = $employees[$schedule->emp_id] ?? [];
+
+            $row = [
+                $schedule->emp_id,
+                $empData['emp_name']   ?? '',
+                $empData['department'] ?? '',
+                $empData['prodline']   ?? '',
+                $empData['team']       ?? '',
+                $empData['shift']      ?? '',
+            ];
+
+            foreach ($daysInPeriod as $date) {
+                $row[] = $daysMap[$date] ?? '';
+            }
+
+            $scheduleIds[] = $schedule->id;
+            $rows[]        = $row;
+        }
+
+        $paginationMeta = [
+            'currentPage' => $paginatedSchedules->currentPage(),
+            'lastPage'    => $paginatedSchedules->lastPage(),
+            'perPage'     => $paginatedSchedules->perPage(),
+            'total'       => $paginatedSchedules->total(),
+            'from'        => $paginatedSchedules->firstItem(),
+            'to'          => $paginatedSchedules->lastItem(),
+        ];
+
+        return [
+            'groupedData' => [[
+                'created_by'         => null,
+                'payroll_date_start' => $dateStart,
+                'payroll_date_end'   => $dateEnd,
+                'headers'            => $firstRowHeaders,
+                'subHeaders'         => $secondRowHeaders,
+                'staticHeaders'      => $staticHeaders,
+                'dateHeaders'        => $dateHeaders,
+                'dayHeaders'         => $dayHeaders,
+                'schedules'          => $rows,
+                'scheduleIds'        => $scheduleIds,
+            ]],
+            'shiftCodes'    => $shiftCodes,
+            'dateStart'     => $dateStart,
+            'dateEnd'       => $dateEnd,
+            'pagination'    => $paginationMeta,
+            'filters'       => [
+                'search'  => $search,
+                'perPage' => $perPage,
+                'status'  => $status,
+            ],
+            'viewerContext' => [
+                'isCreator'   => false,
+                'isApprover'  => false,
+                'isOwnRecord' => false,
+                'canApprove'  => false,
+                'isHrAdmin'   => true,
+                'status'      => $status,
+                'empId'       => null,
+            ],
+        ];
     }
 
     // -------------------------------------------------------------------------
@@ -424,8 +530,13 @@ class WorkScheduleService
             $dayHeaders
         );
 
-        // Build rows from paginated data
-        $rows = collect($paginatedSchedules->items())->map(function ($schedule) use ($employees, $daysInPeriod) {
+        // Build rows from paginated data.
+        // scheduleIds maps rowIndex → WorkSchedule.id so the frontend can send
+        // work_schedule_id directly when saving cell edits (avoids an emp_id lookup).
+        $scheduleIds = [];
+        $rows        = [];
+
+        foreach ($paginatedSchedules->items() as $schedule) {
             $daysMap = [];
             foreach ($schedule->days as $day) {
                 $daysMap[$day->work_date] = $day->shiftCode?->shiftcode ?? '';
@@ -446,8 +557,9 @@ class WorkScheduleService
                 $row[] = $daysMap[$date] ?? '';
             }
 
-            return $row;
-        })->values()->all();
+            $scheduleIds[] = $schedule->id;
+            $rows[]        = $row;
+        }
 
         // Prepare pagination meta
         $paginationMeta = [
@@ -479,6 +591,7 @@ class WorkScheduleService
                 'dateHeaders'        => $dateHeaders,
                 'dayHeaders'         => $dayHeaders,
                 'schedules'          => $rows,
+                'scheduleIds'        => $scheduleIds,
             ]],
             'shiftCodes'    => $shiftCodes,
             'dateStart'     => $dateStart,
@@ -499,6 +612,41 @@ class WorkScheduleService
             ],
         ];
     }
+    // -------------------------------------------------------------------------
+    // Cell-level edits (view page, status=1)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Persist individual cell edits submitted from the View page.
+     *
+     * Each change: { emp_id, work_date, shift_code_id }
+     * shift_code_id is the PK from shift_codes (resolved on the frontend via shiftMap).
+     */
+    public function saveScheduleEdits(
+        string $dateStart,
+        string $dateEnd,
+        array  $changes
+    ): array {
+        $saved  = 0;
+        $errors = [];
+
+        foreach ($changes as $change) {
+            try {
+                $this->repo->updateScheduleDay(
+                    (int)    $change['work_schedule_id'],
+                    (string) $change['work_date'],
+                    isset($change['shift_code_id']) ? (int) $change['shift_code_id'] : null
+                );
+                $saved++;
+            } catch (\Exception $e) {
+                Log::error('saveScheduleEdits: ' . $e->getMessage(), $change);
+                $errors[] = "Schedule {$change['work_schedule_id']} / {$change['work_date']}: {$e->getMessage()}";
+            }
+        }
+
+        return ['saved' => $saved, 'errors' => $errors];
+    }
+
     public function acknowledge($empId, $createdBy, $dateStart, $dateEnd)
     {
         return $this->repo->updateAcknowledge(

@@ -56,11 +56,13 @@ export default function ShiftLegend({ shifts, shiftMap, collapsed, onToggle }) {
                                     rowIdx * codesPerRow,
                                     (rowIdx + 1) * codesPerRow,
                                 )
-                                .map((code, colIdx) => {
+                                .map((code) => {
                                     const style =
                                         shiftMap[code.shiftcode] ?? {};
                                     return (
-                                        <TooltipProvider key={colIdx}>
+                                        <TooltipProvider
+                                            key={code.shift_code_id}
+                                        >
                                             <Tooltip>
                                                 <TooltipTrigger asChild>
                                                     <TableCell

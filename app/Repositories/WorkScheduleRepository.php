@@ -125,7 +125,8 @@ class WorkScheduleRepository
     // -------------------------------------------------------------------------
 
     /**
-     * All schedule groups visible to HR admins, optionally filtered by status.
+     * All schedule groups for HR admins, grouped by cutoff period only.
+     * Each row = one unique (payroll_date_start, payroll_date_end, work_sched_status).
      */
     public function getPaginatedGroupsForHr(
         int    $status,
@@ -136,21 +137,24 @@ class WorkScheduleRepository
         int    $page
     ): LengthAwarePaginator {
         $query = WorkSchedule::selectRaw('
-            MIN(id)                     AS id,
-            created_by,
+            MIN(id)                          AS id,
             payroll_date_start,
             payroll_date_end,
             work_sched_status,
-            COUNT(DISTINCT emp_id)      AS total_employees
+            COUNT(DISTINCT emp_id)           AS total_employees,
+            COUNT(DISTINCT created_by)       AS total_creators
         ')
             ->where('work_sched_status', $status)
-            ->groupBy('created_by', 'payroll_date_start', 'payroll_date_end', 'work_sched_status');
+            ->groupBy('payroll_date_start', 'payroll_date_end', 'work_sched_status');
 
         if ($search !== '') {
-            $query->where('created_by', 'like', "%{$search}%");
+            $query->where(function ($q) use ($search) {
+                $q->where('payroll_date_start', 'like', "%{$search}%")
+                  ->orWhere('payroll_date_end', 'like', "%{$search}%");
+            });
         }
 
-        $allowedOrderCols = ['created_by', 'payroll_date_start', 'work_sched_status'];
+        $allowedOrderCols = ['payroll_date_start', 'payroll_date_end', 'work_sched_status'];
         $orderCol = in_array($orderBy, $allowedOrderCols) ? $orderBy : 'payroll_date_start';
         $dir = strtolower($orderDir) === 'asc' ? 'asc' : 'desc';
 
@@ -158,16 +162,15 @@ class WorkScheduleRepository
     }
 
     /**
-     * Tab counts for HR admin — single query using conditional aggregation
-     * (4× faster than countAllStatuses which fires one query per status).
+     * Tab counts for HR admin — distinct cutoff periods per status.
      */
     public function countAllStatusesForHr(): array
     {
         $row = WorkSchedule::selectRaw("
-            COUNT(DISTINCT CASE WHEN work_sched_status = 1 THEN CONCAT(created_by,'|',payroll_date_start,'|',payroll_date_end) END) AS forApproval,
-            COUNT(DISTINCT CASE WHEN work_sched_status = 2 THEN CONCAT(created_by,'|',payroll_date_start,'|',payroll_date_end) END) AS forAck,
-            COUNT(DISTINCT CASE WHEN work_sched_status = 3 THEN CONCAT(created_by,'|',payroll_date_start,'|',payroll_date_end) END) AS doneAck,
-            COUNT(DISTINCT CASE WHEN work_sched_status = 4 THEN CONCAT(created_by,'|',payroll_date_start,'|',payroll_date_end) END) AS disapproved
+            COUNT(DISTINCT CASE WHEN work_sched_status = 1 THEN CONCAT(payroll_date_start,'|',payroll_date_end) END) AS forApproval,
+            COUNT(DISTINCT CASE WHEN work_sched_status = 2 THEN CONCAT(payroll_date_start,'|',payroll_date_end) END) AS forAck,
+            COUNT(DISTINCT CASE WHEN work_sched_status = 3 THEN CONCAT(payroll_date_start,'|',payroll_date_end) END) AS doneAck,
+            COUNT(DISTINCT CASE WHEN work_sched_status = 4 THEN CONCAT(payroll_date_start,'|',payroll_date_end) END) AS disapproved
         ")->first();
 
         return [
@@ -176,6 +179,21 @@ class WorkScheduleRepository
             'doneAck'     => (int) ($row->doneAck     ?? 0),
             'disapproved' => (int) ($row->disapproved ?? 0),
         ];
+    }
+
+    /**
+     * All schedules for a cutoff period, regardless of creator (HR admin view).
+     */
+    public function getSchedulesByGroupQueryForHr(
+        string $dateStart,
+        string $dateEnd,
+        int    $status
+    ): \Illuminate\Database\Eloquent\Builder {
+        return WorkSchedule::where('payroll_date_start', $dateStart)
+            ->where('payroll_date_end', $dateEnd)
+            ->where('work_sched_status', $status)
+            ->with(['days.shiftCode'])
+            ->orderBy('emp_id');
     }
 
     /**
@@ -467,6 +485,27 @@ class WorkScheduleRepository
             'work_sched_status' => $status,
             'remarks'           => $remarks,
         ]);
+    }
+
+    // -------------------------------------------------------------------------
+    // Individual cell edits (view page)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Update a single schedule day's shift code.
+     * $shiftCodeId is the PK from shift_codes; pass null to clear the cell.
+     */
+    public function updateScheduleDay(
+        int    $workScheduleId,
+        string $workDate,
+        ?int   $shiftCodeId
+    ): void {
+        // updateOrCreate handles both existing days and days that were left
+        // empty during template submission (no WorkScheduleDay row created).
+        WorkScheduleDay::updateOrCreate(
+            ['work_schedule_id' => $workScheduleId, 'work_date' => $workDate],
+            ['schedule_code'    => $shiftCodeId]
+        );
     }
 
     // -------------------------------------------------------------------------

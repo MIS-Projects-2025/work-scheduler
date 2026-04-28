@@ -26,12 +26,20 @@ export const buildShiftMap = (shiftCodes = []) => {
     );
 };
 
-/** Convert a raw shiftCodes array into Combobox option objects. */
-export const buildShiftOptions = (shiftCodes = []) =>
-    shiftCodes.map((s) => ({
-        value: s.shiftcode,
-        label: `${s.shiftcode} - ${s.shiftcode_desc}`,
-    }));
+/** Convert a raw shiftCodes array into Combobox option objects (deduplicated by code). */
+export const buildShiftOptions = (shiftCodes = []) => {
+    const seen = new Set();
+    return shiftCodes
+        .filter((s) => {
+            if (!s.shiftcode || seen.has(s.shiftcode)) return false;
+            seen.add(s.shiftcode);
+            return true;
+        })
+        .map((s) => ({
+            value: s.shiftcode,
+            label: `${s.shiftcode} - ${s.shiftcode_desc}`,
+        }));
+};
 
 export const getPayrollPeriodDays = (startDate, endDate) => {
     const [sy, sm, sd] = startDate.split("-").map(Number);
