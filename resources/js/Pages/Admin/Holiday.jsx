@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState } from "react";
 import {
     Table,
     TableBody,
@@ -15,16 +15,6 @@ import {
     DialogFooter,
     DialogDescription,
 } from "@/components/ui/dialog";
-import {
-    AlertDialog,
-    AlertDialogAction,
-    AlertDialogCancel,
-    AlertDialogContent,
-    AlertDialogDescription,
-    AlertDialogFooter,
-    AlertDialogHeader,
-    AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -44,18 +34,15 @@ import {
     CardDescription,
 } from "@/components/ui/card";
 import { toast } from "sonner";
-import {
-    CalendarDays,
-    Plus,
-    Pencil,
-    Trash2,
-    Search,
-    Loader2,
-    RefreshCw,
-    ChevronLeft,
-    ChevronRight,
-} from "lucide-react";
+import { CalendarDays, Loader2, Pencil, Trash2 } from "lucide-react";
 import AuthenticatedLayout from "@/Layouts/AuthenticatedLayout";
+
+import { usePaginatedResource } from "./hooks/usePaginatedResource";
+import { useCrudDialog } from "./hooks/useCrudDialog";
+import { PageHeader } from "./components/PageHeader";
+import { DataToolbar } from "./components/DataToolbar";
+import { PaginationFooter } from "./components/PaginationFooter";
+import { DeleteConfirmDialog } from "./components/DeleteConfirmDialog";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -78,230 +65,90 @@ const EMPTY_FORM = {
     color: "#EF4444",
 };
 
-const PER_PAGE_OPTIONS = ["10", "15", "25", "50"];
-
-// ─── API helpers ──────────────────────────────────────────────────────────────
-
-async function apiFetch(url, options = {}) {
-    const csrfToken = document
-        .querySelector('meta[name="csrf-token"]')
-        ?.getAttribute("content");
-    const res = await fetch(url, {
-        headers: {
-            "Content-Type": "application/json",
-            "X-Requested-With": "XMLHttpRequest",
-            ...(csrfToken ? { "X-CSRF-TOKEN": csrfToken } : {}),
-        },
-        ...options,
-    });
-    const json = await res.json();
-    if (!res.ok || !json.success)
-        throw new Error(json.message ?? "Request failed.");
-    return json;
-}
+const currentYear = new Date().getFullYear();
+const YEAR_OPTIONS = [
+    { label: "All years", value: "all" },
+    ...Array.from({ length: 5 }, (_, i) => {
+        const y = String(currentYear - 1 + i);
+        return { label: y, value: y };
+    }),
+];
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function Holiday() {
-    // Server-side pagination state
-    const [holidays, setHolidays] = useState([]);
-    const [meta, setMeta] = useState({
-        current_page: 1,
-        last_page: 1,
-        total: 0,
-        per_page: 15,
-    });
-    const [loading, setLoading] = useState(false);
-    const [saving, setSaving] = useState(false);
+    const [yearFilter, setYearFilter] = useState(String(currentYear));
 
-    // Filters (controlled; applied on Enter / blur / button for search)
-    const [search, setSearch] = useState("");
-    const [searchInput, setSearchInput] = useState(""); // debounced input
-    const [yearFilter, setYearFilter] = useState(
-        String(new Date().getFullYear()),
-    );
-    const [perPage, setPerPage] = useState("15");
-    const [page, setPage] = useState(1);
-
-    // Dialog state
-    const [dialogOpen, setDialogOpen] = useState(false);
-    const [editTarget, setEditTarget] = useState(null);
-    const [form, setForm] = useState(EMPTY_FORM);
-    const [formErrors, setFormErrors] = useState({});
-
-    // Delete confirm
-    const [deleteTarget, setDeleteTarget] = useState(null);
-    const [deleting, setDeleting] = useState(false);
-
-    // Debounce search input
-    const debounceRef = useRef(null);
-    function handleSearchInput(value) {
-        setSearchInput(value);
-        clearTimeout(debounceRef.current);
-        debounceRef.current = setTimeout(() => {
-            setSearch(value);
-            setPage(1);
-        }, 400);
-    }
-
-    // ── Fetch ─────────────────────────────────────────────────────────────────
-
-    const fetchHolidays = useCallback(
-        async (currentPage = page) => {
-            setLoading(true);
-            try {
-                const params = new URLSearchParams();
-                if (yearFilter && yearFilter !== "all")
-                    params.set("year", yearFilter);
-                if (search) params.set("search", search);
-                params.set("per_page", perPage);
-                params.set("page", String(currentPage));
-
-                const json = await apiFetch(`/holidays?${params.toString()}`);
-
-                // Laravel paginator shape: json.data.data / json.data.current_page etc.
-                const paginator = json.data;
-                setHolidays(paginator.data);
-                setMeta({
-                    current_page: paginator.current_page,
-                    last_page: paginator.last_page,
-                    total: paginator.total,
-                    per_page: paginator.per_page,
-                });
-            } catch (e) {
-                toast.error(e.message);
-            } finally {
-                setLoading(false);
-            }
+    // ── Paginated data ────────────────────────────────────────────────────────
+    const {
+        records: holidays,
+        meta,
+        loading,
+        perPage,
+        setPerPage,
+        page,
+        setPage,
+        searchInput,
+        handleSearchInput,
+        refresh,
+        pageAfterDelete,
+        from,
+        to,
+    } = usePaginatedResource({
+        extraFilters: { year: yearFilter },
+        fetchFn: async (params) => {
+            const { data: json } = await axios.get(
+                route("holidays.index", Object.fromEntries(params)),
+            );
+            return json.data;
         },
-        [yearFilter, search, perPage, page],
-    );
+    });
 
-    useEffect(() => {
-        fetchHolidays(page);
-    }, [yearFilter, search, perPage, page]);
-
-    // Reset to page 1 when filters change
-    useEffect(() => {
-        setPage(1);
-    }, [yearFilter, search, perPage]);
-
-    // ── Dialog helpers ────────────────────────────────────────────────────────
-
-    function openCreate() {
-        setEditTarget(null);
-        setForm(EMPTY_FORM);
-        setFormErrors({});
-        setDialogOpen(true);
-    }
-
-    function openEdit(holiday) {
-        setEditTarget(holiday);
-        setForm({
-            holiday_name: holiday.holiday_name,
-            holiday_date: holiday.holiday_date?.substring(0, 10) ?? "",
-            holiday_type: holiday.holiday_type,
-            color: holiday.color ?? "#EF4444",
-        });
-        setFormErrors({});
-        setDialogOpen(true);
-    }
-
-    function validateForm() {
-        const errors = {};
-        if (!form.holiday_name.trim())
-            errors.holiday_name = "Name is required.";
-        if (!form.holiday_date) errors.holiday_date = "Date is required.";
-        if (!form.holiday_type) errors.holiday_type = "Type is required.";
-        if (!/^#[0-9A-Fa-f]{6}$/.test(form.color))
-            errors.color = "Invalid hex color.";
-        setFormErrors(errors);
-        return Object.keys(errors).length === 0;
-    }
-
-    // ── Save ──────────────────────────────────────────────────────────────────
-
-    async function handleSave() {
-        if (!validateForm()) return;
-        setSaving(true);
-        try {
-            if (editTarget) {
-                await apiFetch(`/holidays/${editTarget.ID}`, {
-                    method: "PUT",
-                    body: JSON.stringify(form),
-                });
-                toast.success("Holiday updated successfully.");
-            } else {
-                await apiFetch("/holidays", {
-                    method: "POST",
-                    body: JSON.stringify(form),
-                });
-                toast.success("Holiday created successfully.");
-            }
-            setDialogOpen(false);
-            fetchHolidays(page);
-        } catch (e) {
-            toast.error(e.message);
-        } finally {
-            setSaving(false);
-        }
-    }
-
-    // ── Delete ────────────────────────────────────────────────────────────────
-
-    async function handleDelete() {
-        if (!deleteTarget) return;
-        setDeleting(true);
-        try {
-            await apiFetch(`/holidays/${deleteTarget.ID}`, {
-                method: "DELETE",
-            });
+    // ── CRUD ──────────────────────────────────────────────────────────────────
+    const crud = useCrudDialog({
+        emptyForm: EMPTY_FORM,
+        buildForm: (h) => ({
+            holiday_name: h.holiday_name,
+            holiday_date: h.holiday_date?.substring(0, 10) ?? "",
+            holiday_type: h.holiday_type,
+            color: h.color ?? "#EF4444",
+        }),
+        validate: (form) => {
+            const errors = {};
+            if (!form.holiday_name.trim())
+                errors.holiday_name = "Name is required.";
+            if (!form.holiday_date) errors.holiday_date = "Date is required.";
+            if (!form.holiday_type) errors.holiday_type = "Type is required.";
+            if (!/^#[0-9A-Fa-f]{6}$/.test(form.color))
+                errors.color = "Invalid hex color.";
+            return errors;
+        },
+        onCreate: async (form) => {
+            await axios.post(route("holidays.store"), form);
+            toast.success("Holiday created successfully.");
+        },
+        onUpdate: async (target, form) => {
+            await axios.put(route("holidays.update", { id: target.ID }), form);
+            toast.success("Holiday updated successfully.");
+        },
+        onDelete: async (target) => {
+            await axios.delete(route("holidays.destroy", { id: target.ID }));
             toast.success("Holiday removed successfully.");
-            setDeleteTarget(null);
-            // If last item on page > 1, go back a page
-            const newPage = holidays.length === 1 && page > 1 ? page - 1 : page;
-            setPage(newPage);
-            fetchHolidays(newPage);
-        } catch (e) {
-            toast.error(e.message);
-        } finally {
-            setDeleting(false);
-        }
-    }
-
-    // ── Year options ──────────────────────────────────────────────────────────
-
-    const yearOptions = Array.from({ length: 5 }, (_, i) =>
-        String(new Date().getFullYear() - 1 + i),
-    );
-
-    // ── Pagination helpers ────────────────────────────────────────────────────
-
-    const from =
-        meta.total === 0 ? 0 : (meta.current_page - 1) * meta.per_page + 1;
-    const to = Math.min(meta.current_page * meta.per_page, meta.total);
+        },
+        afterSave: refresh,
+        afterDelete: pageAfterDelete,
+    });
 
     // ── Render ────────────────────────────────────────────────────────────────
-
     return (
         <AuthenticatedLayout>
             <div className="p-6 space-y-6 max-w-6xl mx-auto">
-                {/* ── Page header ── */}
-                <div className="flex items-center gap-3">
-                    <div className="p-2 rounded-lg bg-primary/10">
-                        <CalendarDays className="h-6 w-6 text-primary" />
-                    </div>
-                    <div>
-                        <h1 className="text-2xl font-semibold tracking-tight">
-                            Holiday Maintenance
-                        </h1>
-                        <p className="text-sm text-muted-foreground">
-                            Manage company holidays for payroll and scheduling.
-                        </p>
-                    </div>
-                </div>
+                <PageHeader
+                    icon={<CalendarDays className="h-6 w-6 text-primary" />}
+                    title="Holiday Maintenance"
+                    subtitle="Manage company holidays for payroll and scheduling."
+                />
 
-                {/* ── Card ── */}
                 <Card>
                     <CardHeader className="pb-4">
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -314,65 +161,25 @@ export default function Holiday() {
                                     {meta.total !== 1 ? "s" : ""}
                                 </CardDescription>
                             </div>
-
-                            <div className="flex flex-wrap items-center gap-2">
-                                {/* Year filter */}
-                                <Select
-                                    value={yearFilter}
-                                    onValueChange={(v) => {
-                                        setYearFilter(v);
-                                        setPage(1);
-                                    }}
-                                >
-                                    <SelectTrigger className="w-28">
-                                        <SelectValue placeholder="Year" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="all">
-                                            All years
-                                        </SelectItem>
-                                        {yearOptions.map((y) => (
-                                            <SelectItem key={y} value={y}>
-                                                {y}
-                                            </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-
-                                {/* Search */}
-                                <div className="relative">
-                                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                                    <Input
-                                        placeholder="Search..."
-                                        value={searchInput}
-                                        onChange={(e) =>
-                                            handleSearchInput(e.target.value)
-                                        }
-                                        className="pl-8 w-48"
-                                    />
-                                </div>
-
-                                {/* Refresh */}
-                                <Button
-                                    variant="outline"
-                                    size="icon"
-                                    onClick={() => fetchHolidays(page)}
-                                    disabled={loading}
-                                >
-                                    <RefreshCw
-                                        className={`h-4 w-4 ${loading ? "animate-spin" : ""}`}
-                                    />
-                                </Button>
-
-                                {/* Add */}
-                                <Button
-                                    onClick={openCreate}
-                                    className="gap-1.5"
-                                >
-                                    <Plus className="h-4 w-4" />
-                                    Add Holiday
-                                </Button>
-                            </div>
+                            <DataToolbar
+                                searchValue={searchInput}
+                                onSearchChange={handleSearchInput}
+                                loading={loading}
+                                onRefresh={refresh}
+                                addLabel="Add Holiday"
+                                onAdd={crud.openCreate}
+                                filters={[
+                                    {
+                                        value: yearFilter,
+                                        onChange: (v) => {
+                                            setYearFilter(v);
+                                            setPage(1);
+                                        },
+                                        placeholder: "Year",
+                                        options: YEAR_OPTIONS,
+                                    },
+                                ]}
+                            />
                         </div>
                     </CardHeader>
 
@@ -392,7 +199,6 @@ export default function Holiday() {
                                     </TableHead>
                                 </TableRow>
                             </TableHeader>
-
                             <TableBody>
                                 {loading ? (
                                     <TableRow>
@@ -461,28 +267,14 @@ export default function Holiday() {
                                                 </div>
                                             </TableCell>
                                             <TableCell className="text-right pr-6">
-                                                <div className="flex justify-end gap-1">
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="icon"
-                                                        className="h-8 w-8"
-                                                        onClick={() =>
-                                                            openEdit(h)
-                                                        }
-                                                    >
-                                                        <Pencil className="h-3.5 w-3.5" />
-                                                    </Button>
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="icon"
-                                                        className="h-8 w-8 text-destructive hover:text-destructive"
-                                                        onClick={() =>
-                                                            setDeleteTarget(h)
-                                                        }
-                                                    >
-                                                        <Trash2 className="h-3.5 w-3.5" />
-                                                    </Button>
-                                                </div>
+                                                <RowActions
+                                                    onEdit={() =>
+                                                        crud.openEdit(h)
+                                                    }
+                                                    onDelete={() =>
+                                                        crud.setDeleteTarget(h)
+                                                    }
+                                                />
                                             </TableCell>
                                         </TableRow>
                                     ))
@@ -490,84 +282,42 @@ export default function Holiday() {
                             </TableBody>
                         </Table>
 
-                        {/* ── Pagination footer ── */}
-                        {!loading && meta.total > 0 && (
-                            <div className="flex items-center justify-between px-6 py-3 border-t text-sm text-muted-foreground">
-                                <div className="flex items-center gap-2">
-                                    <span>Rows per page</span>
-                                    <Select
-                                        value={String(perPage)}
-                                        onValueChange={(v) => {
-                                            setPerPage(v);
-                                            setPage(1);
-                                        }}
-                                    >
-                                        <SelectTrigger className="h-8 w-16">
-                                            <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            {PER_PAGE_OPTIONS.map((o) => (
-                                                <SelectItem key={o} value={o}>
-                                                    {o}
-                                                </SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-
-                                <div className="flex items-center gap-4">
-                                    <span>
-                                        {from}–{to} of {meta.total}
-                                    </span>
-                                    <div className="flex items-center gap-1">
-                                        <Button
-                                            variant="outline"
-                                            size="icon"
-                                            className="h-8 w-8"
-                                            disabled={meta.current_page <= 1}
-                                            onClick={() =>
-                                                setPage((p) => p - 1)
-                                            }
-                                        >
-                                            <ChevronLeft className="h-4 w-4" />
-                                        </Button>
-                                        <Button
-                                            variant="outline"
-                                            size="icon"
-                                            className="h-8 w-8"
-                                            disabled={
-                                                meta.current_page >=
-                                                meta.last_page
-                                            }
-                                            onClick={() =>
-                                                setPage((p) => p + 1)
-                                            }
-                                        >
-                                            <ChevronRight className="h-4 w-4" />
-                                        </Button>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
+                        <PaginationFooter
+                            meta={meta}
+                            from={from}
+                            to={to}
+                            perPage={perPage}
+                            onPerPageChange={(v) => {
+                                setPerPage(v);
+                                setPage(1);
+                            }}
+                            onPrev={() => setPage((p) => p - 1)}
+                            onNext={() => setPage((p) => p + 1)}
+                        />
                     </CardContent>
                 </Card>
 
                 {/* ── Create / Edit Dialog ── */}
-                <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+                <Dialog
+                    open={crud.dialogOpen}
+                    onOpenChange={crud.setDialogOpen}
+                >
                     <DialogContent className="sm:max-w-md">
                         <DialogHeader>
                             <DialogTitle>
-                                {editTarget ? "Edit Holiday" : "Add Holiday"}
+                                {crud.editTarget
+                                    ? "Edit Holiday"
+                                    : "Add Holiday"}
                             </DialogTitle>
                             <DialogDescription>
-                                {editTarget
+                                {crud.editTarget
                                     ? "Update the details of this holiday."
                                     : "Fill in the details to add a new holiday."}
                             </DialogDescription>
                         </DialogHeader>
 
                         <div className="space-y-4 py-2">
-                            {/* Holiday Name */}
+                            {/* Name */}
                             <div className="space-y-1.5">
                                 <Label htmlFor="holiday_name">
                                     Holiday Name{" "}
@@ -576,17 +326,17 @@ export default function Holiday() {
                                 <Input
                                     id="holiday_name"
                                     placeholder="e.g. New Year's Day"
-                                    value={form.holiday_name}
+                                    value={crud.form.holiday_name}
                                     onChange={(e) =>
-                                        setForm({
-                                            ...form,
+                                        crud.setForm({
+                                            ...crud.form,
                                             holiday_name: e.target.value,
                                         })
                                     }
                                 />
-                                {formErrors.holiday_name && (
+                                {crud.formErrors.holiday_name && (
                                     <p className="text-xs text-destructive">
-                                        {formErrors.holiday_name}
+                                        {crud.formErrors.holiday_name}
                                     </p>
                                 )}
                             </div>
@@ -600,31 +350,34 @@ export default function Holiday() {
                                 <Input
                                     id="holiday_date"
                                     type="date"
-                                    value={form.holiday_date}
+                                    value={crud.form.holiday_date}
                                     onChange={(e) =>
-                                        setForm({
-                                            ...form,
+                                        crud.setForm({
+                                            ...crud.form,
                                             holiday_date: e.target.value,
                                         })
                                     }
                                 />
-                                {formErrors.holiday_date && (
+                                {crud.formErrors.holiday_date && (
                                     <p className="text-xs text-destructive">
-                                        {formErrors.holiday_date}
+                                        {crud.formErrors.holiday_date}
                                     </p>
                                 )}
                             </div>
 
-                            {/* Holiday Type */}
+                            {/* Type */}
                             <div className="space-y-1.5">
                                 <Label>
                                     Type{" "}
                                     <span className="text-destructive">*</span>
                                 </Label>
                                 <Select
-                                    value={form.holiday_type}
+                                    value={crud.form.holiday_type}
                                     onValueChange={(v) =>
-                                        setForm({ ...form, holiday_type: v })
+                                        crud.setForm({
+                                            ...crud.form,
+                                            holiday_type: v,
+                                        })
                                     }
                                 >
                                     <SelectTrigger>
@@ -638,9 +391,9 @@ export default function Holiday() {
                                         ))}
                                     </SelectContent>
                                 </Select>
-                                {formErrors.holiday_type && (
+                                {crud.formErrors.holiday_type && (
                                     <p className="text-xs text-destructive">
-                                        {formErrors.holiday_type}
+                                        {crud.formErrors.holiday_type}
                                     </p>
                                 )}
                             </div>
@@ -658,13 +411,13 @@ export default function Holiday() {
                                             type="button"
                                             title={c.label}
                                             onClick={() =>
-                                                setForm({
-                                                    ...form,
+                                                crud.setForm({
+                                                    ...crud.form,
                                                     color: c.value,
                                                 })
                                             }
                                             className={`h-7 w-7 rounded-md border-2 transition-all ${
-                                                form.color === c.value
+                                                crud.form.color === c.value
                                                     ? "border-primary scale-110 shadow-md"
                                                     : "border-transparent hover:border-muted-foreground"
                                             }`}
@@ -675,20 +428,20 @@ export default function Holiday() {
                                 <div className="flex items-center gap-2">
                                     <input
                                         type="color"
-                                        value={form.color}
+                                        value={crud.form.color}
                                         onChange={(e) =>
-                                            setForm({
-                                                ...form,
+                                            crud.setForm({
+                                                ...crud.form,
                                                 color: e.target.value,
                                             })
                                         }
                                         className="h-9 w-9 cursor-pointer rounded border border-input bg-transparent p-0.5"
                                     />
                                     <Input
-                                        value={form.color}
+                                        value={crud.form.color}
                                         onChange={(e) =>
-                                            setForm({
-                                                ...form,
+                                            crud.setForm({
+                                                ...crud.form,
                                                 color: e.target.value,
                                             })
                                         }
@@ -698,12 +451,14 @@ export default function Holiday() {
                                     />
                                     <span
                                         className="inline-block h-9 w-9 rounded border border-input flex-shrink-0"
-                                        style={{ backgroundColor: form.color }}
+                                        style={{
+                                            backgroundColor: crud.form.color,
+                                        }}
                                     />
                                 </div>
-                                {formErrors.color && (
+                                {crud.formErrors.color && (
                                     <p className="text-xs text-destructive">
-                                        {formErrors.color}
+                                        {crud.formErrors.color}
                                     </p>
                                 )}
                             </div>
@@ -712,59 +467,70 @@ export default function Holiday() {
                         <DialogFooter className="gap-2">
                             <Button
                                 variant="outline"
-                                onClick={() => setDialogOpen(false)}
-                                disabled={saving}
+                                onClick={() => crud.setDialogOpen(false)}
+                                disabled={crud.saving}
                             >
                                 Cancel
                             </Button>
                             <Button
-                                onClick={handleSave}
-                                disabled={saving}
+                                onClick={crud.handleSave}
+                                disabled={crud.saving}
                                 className="gap-1.5"
                             >
-                                {saving && (
+                                {crud.saving && (
                                     <Loader2 className="h-4 w-4 animate-spin" />
                                 )}
-                                {editTarget ? "Save Changes" : "Add Holiday"}
+                                {crud.editTarget
+                                    ? "Save Changes"
+                                    : "Add Holiday"}
                             </Button>
                         </DialogFooter>
                     </DialogContent>
                 </Dialog>
 
                 {/* ── Delete Confirm ── */}
-                <AlertDialog
-                    open={!!deleteTarget}
-                    onOpenChange={(o) => !o && setDeleteTarget(null)}
-                >
-                    <AlertDialogContent>
-                        <AlertDialogHeader>
-                            <AlertDialogTitle>Delete Holiday</AlertDialogTitle>
-                            <AlertDialogDescription>
-                                Are you sure you want to delete{" "}
-                                <span className="font-semibold text-foreground">
-                                    {deleteTarget?.holiday_name}
-                                </span>
-                                ? This action cannot be undone.
-                            </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                            <AlertDialogCancel disabled={deleting}>
-                                Cancel
-                            </AlertDialogCancel>
-                            <AlertDialogAction
-                                onClick={handleDelete}
-                                disabled={deleting}
-                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90 gap-1.5"
-                            >
-                                {deleting && (
-                                    <Loader2 className="h-4 w-4 animate-spin" />
-                                )}
-                                Delete
-                            </AlertDialogAction>
-                        </AlertDialogFooter>
-                    </AlertDialogContent>
-                </AlertDialog>
+                <DeleteConfirmDialog
+                    open={!!crud.deleteTarget}
+                    onOpenChange={(o) => !o && crud.setDeleteTarget(null)}
+                    title="Delete Holiday"
+                    description={
+                        <>
+                            Are you sure you want to delete{" "}
+                            <span className="font-semibold text-foreground">
+                                {crud.deleteTarget?.holiday_name}
+                            </span>
+                            ? This action cannot be undone.
+                        </>
+                    }
+                    onConfirm={crud.handleDelete}
+                    isDeleting={crud.deleting}
+                />
             </div>
         </AuthenticatedLayout>
+    );
+}
+
+// ─── Shared row action buttons ────────────────────────────────────────────────
+
+function RowActions({ onEdit, onDelete }) {
+    return (
+        <div className="flex justify-end gap-1">
+            <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={onEdit}
+            >
+                <Pencil className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 text-destructive hover:text-destructive"
+                onClick={onDelete}
+            >
+                <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+        </div>
     );
 }

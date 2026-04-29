@@ -1,4 +1,3 @@
-import { useState, useEffect, useCallback, useRef } from "react";
 import {
     Table,
     TableBody,
@@ -15,20 +14,11 @@ import {
     DialogFooter,
     DialogDescription,
 } from "@/components/ui/dialog";
-import {
-    AlertDialog,
-    AlertDialogAction,
-    AlertDialogCancel,
-    AlertDialogContent,
-    AlertDialogDescription,
-    AlertDialogFooter,
-    AlertDialogHeader,
-    AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
 import {
     Select,
     SelectContent,
@@ -43,27 +33,21 @@ import {
     CardTitle,
     CardDescription,
 } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
-import {
-    Clock,
-    Plus,
-    Pencil,
-    Trash2,
-    Search,
-    Loader2,
-    RefreshCw,
-    ChevronLeft,
-    ChevronRight,
-} from "lucide-react";
+import { Clock, Loader2, Pencil, Trash2 } from "lucide-react";
 import AuthenticatedLayout from "@/Layouts/AuthenticatedLayout";
+
+import { usePaginatedResource } from "./hooks/usePaginatedResource";
+import { useCrudDialog } from "./hooks/useCrudDialog";
+import { PageHeader } from "./components/PageHeader";
+import { DataToolbar } from "./components/DataToolbar";
+import { PaginationFooter } from "./components/PaginationFooter";
+import { DeleteConfirmDialog } from "./components/DeleteConfirmDialog";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const PER_PAGE_OPTIONS = ["10", "15", "25", "50"];
 const STATUS_OPTIONS = ["Active", "Inactive"];
 
-// time_windows positional map
 const TIME_WINDOW_FIELDS = [
     { index: 0, label: "Check-in", required: true },
     { index: 1, label: "Break Out 1", required: false },
@@ -86,281 +70,118 @@ const EMPTY_FORM = {
     time_windows: ["", "", "", "", "", "", "", ""],
 };
 
-// ─── Helper Functions ─────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-// Ensure color has # prefix for display and form
 function normalizeColor(color) {
     if (!color) return "#FFFFFF";
-    // Add # if missing
-    return color.startsWith("#") ? color : `#${color}`;
-}
-
-// Keep color with # prefix for backend (backend expects # prefix)
-function prepareColorForBackend(color) {
-    if (!color) return "#FFFFFF";
-    // Ensure # prefix exists
     return color.startsWith("#") ? color : `#${color}`;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function ShiftCode() {
-    const [records, setRecords] = useState([]);
-    const [meta, setMeta] = useState({
-        current_page: 1,
-        last_page: 1,
-        total: 0,
-        per_page: 15,
-    });
-    const [loading, setLoading] = useState(false);
-    const [saving, setSaving] = useState(false);
-
-    const [searchInput, setSearchInput] = useState("");
-    const [search, setSearch] = useState("");
-    const [perPage, setPerPage] = useState("15");
-    const [page, setPage] = useState(1);
-
-    const [dialogOpen, setDialogOpen] = useState(false);
-    const [editTarget, setEditTarget] = useState(null);
-    const [form, setForm] = useState(EMPTY_FORM);
-    const [formErrors, setFormErrors] = useState({});
-
-    const [deleteTarget, setDeleteTarget] = useState(null);
-    const [deleting, setDeleting] = useState(false);
-
-    const debounceRef = useRef(null);
-
-    function handleSearchInput(value) {
-        setSearchInput(value);
-        clearTimeout(debounceRef.current);
-        debounceRef.current = setTimeout(() => {
-            setSearch(value);
-            setPage(1);
-        }, 400);
-    }
-
-    // ── Fetch ─────────────────────────────────────────────────────────────────
-
-    const fetchRecords = useCallback(
-        async (currentPage = page) => {
-            setLoading(true);
-            try {
-                const params = new URLSearchParams();
-                if (search) params.set("search", search);
-                params.set("per_page", perPage);
-                params.set("page", String(currentPage));
-
-                const response = await axios.get(
-                    route("shift-codes.index", Object.fromEntries(params)),
-                );
-
-                if (response.data.success) {
-                    const paginatedData = response.data.data;
-                    const recordsData = paginatedData.data || [];
-
-                    setMeta({
-                        current_page: paginatedData.current_page || 1,
-                        last_page: paginatedData.last_page || 1,
-                        total: paginatedData.total || 0,
-                        per_page: paginatedData.per_page || parseInt(perPage),
-                    });
-
-                    setRecords(recordsData);
-                } else {
-                    toast.error(
-                        response.data.message || "Failed to fetch shift codes.",
-                    );
-                    setRecords([]);
-                }
-            } catch (e) {
-                console.error("Fetch error:", e);
-                toast.error(e.response?.data?.message ?? e.message);
-                setRecords([]);
-                setMeta({
-                    current_page: 1,
-                    last_page: 1,
-                    total: 0,
-                    per_page: parseInt(perPage),
-                });
-            } finally {
-                setLoading(false);
-            }
+    // ── Paginated data ────────────────────────────────────────────────────────
+    const {
+        records,
+        meta,
+        loading,
+        perPage,
+        setPerPage,
+        page,
+        setPage,
+        searchInput,
+        handleSearchInput,
+        refresh,
+        pageAfterDelete,
+        from,
+        to,
+    } = usePaginatedResource({
+        fetchFn: async (params) => {
+            const response = await axios.get(
+                route("shift-codes.index", Object.fromEntries(params)),
+            );
+            if (!response.data.success)
+                throw new Error(response.data.message || "Failed to fetch.");
+            return response.data.data;
         },
-        [search, perPage],
-    );
+    });
 
-    useEffect(() => {
-        fetchRecords(page);
-    }, [search, perPage, page, fetchRecords]);
-
-    useEffect(() => {
-        setPage(1);
-    }, [search, perPage]);
-
-    // ── Dialog helpers ────────────────────────────────────────────────────────
-
-    function openCreate() {
-        setEditTarget(null);
-        setForm({
-            ...EMPTY_FORM,
-            shiftcode_bg_color: "#FFFFFF",
-            shiftcode_font_color: "#000000",
-        });
-        setFormErrors({});
-        setDialogOpen(true);
-    }
-
-    function openEdit(record) {
-        setEditTarget(record);
-        setForm({
-            shiftcode: record.shiftcode ?? "",
-            shiftcode_desc: record.shiftcode_desc ?? "",
-            shift_group: record.shift_group ?? "DEFAULT",
-            shiftcode_bg_color:
-                normalizeColor(record.shiftcode_bg_color) ?? "#FFFFFF",
-            shiftcode_font_color:
-                normalizeColor(record.shiftcode_font_color) ?? "#000000",
-            shift_code_status: record.shift_code_status ?? "Active",
-            ot_hrs: String(record.ot_hrs ?? "0"),
+    // ── CRUD ──────────────────────────────────────────────────────────────────
+    const crud = useCrudDialog({
+        emptyForm: EMPTY_FORM,
+        buildForm: (r) => ({
+            shiftcode: r.shiftcode ?? "",
+            shiftcode_desc: r.shiftcode_desc ?? "",
+            shift_group: r.shift_group ?? "DEFAULT",
+            shiftcode_bg_color: normalizeColor(r.shiftcode_bg_color),
+            shiftcode_font_color: normalizeColor(r.shiftcode_font_color),
+            shift_code_status: r.shift_code_status ?? "Active",
+            ot_hrs: String(r.ot_hrs ?? "0"),
             time_windows:
-                Array.isArray(record.time_windows) &&
-                record.time_windows.length === 8
-                    ? record.time_windows
+                Array.isArray(r.time_windows) && r.time_windows.length === 8
+                    ? r.time_windows
                     : ["", "", "", "", "", "", "", ""],
-        });
-        setFormErrors({});
-        setDialogOpen(true);
-    }
-
-    function setTimeWindow(index, value) {
-        const updated = [...form.time_windows];
-        updated[index] = value;
-        setForm({ ...form, time_windows: updated });
-    }
-
-    function validateForm() {
-        const errors = {};
-        if (!form.shiftcode.trim())
-            errors.shiftcode = "Shift code is required.";
-        if (!form.shift_code_status)
-            errors.shift_code_status = "Status is required.";
-        if (isNaN(Number(form.ot_hrs)) || Number(form.ot_hrs) < 0)
-            errors.ot_hrs = "OT hours must be a non-negative number.";
-        if (!form.time_windows[0])
-            errors.time_windows_0 = "Check-in is required.";
-        if (!form.time_windows[7])
-            errors.time_windows_7 = "Checkout is required.";
-
-        // Validate hex color with # prefix (backend requirement)
-        const hexColorRegex = /^#[0-9A-Fa-f]{6}$/;
-        if (!hexColorRegex.test(form.shiftcode_bg_color))
-            errors.shiftcode_bg_color =
-                "Invalid hex color. Must be format: #RRGGBB";
-        if (!hexColorRegex.test(form.shiftcode_font_color))
-            errors.shiftcode_font_color =
-                "Invalid hex color. Must be format: #RRGGBB";
-
-        setFormErrors(errors);
-        return Object.keys(errors).length === 0;
-    }
-
-    // ── Save ──────────────────────────────────────────────────────────────────
-
-    async function handleSave() {
-        if (!validateForm()) return;
-        setSaving(true);
-        try {
-            const payload = {
-                ...form,
-                ot_hrs: Number(form.ot_hrs),
-                // Send colors with # prefix as backend expects
-                shiftcode_bg_color: prepareColorForBackend(
-                    form.shiftcode_bg_color,
-                ),
-                shiftcode_font_color: prepareColorForBackend(
-                    form.shiftcode_font_color,
-                ),
-            };
-
-            console.log("Sending payload:", payload); // Debug log
-
-            if (editTarget) {
-                await axios.put(
-                    route("shift-codes.update", {
-                        id: editTarget.shift_code_id,
-                    }),
-                    payload,
-                );
-                toast.success("Shift code updated successfully.");
-            } else {
-                await axios.post(route("shift-codes.store"), payload);
-                toast.success("Shift code created successfully.");
-            }
-            setDialogOpen(false);
-            fetchRecords(page);
-        } catch (e) {
-            console.error("Save error:", e.response?.data);
-            const errorMessage = e.response?.data?.message || e.message;
-            toast.error(errorMessage);
-            if (e.response?.data?.errors) {
-                setFormErrors(e.response.data.errors);
-            }
-        } finally {
-            setSaving(false);
-        }
-    }
-
-    // ── Delete ────────────────────────────────────────────────────────────────
-
-    async function handleDelete() {
-        if (!deleteTarget) return;
-        setDeleting(true);
-        try {
+        }),
+        validate: (form) => {
+            const errors = {};
+            const hex = /^#[0-9A-Fa-f]{6}$/;
+            if (!form.shiftcode.trim())
+                errors.shiftcode = "Shift code is required.";
+            if (!form.shift_code_status)
+                errors.shift_code_status = "Status is required.";
+            if (isNaN(Number(form.ot_hrs)) || Number(form.ot_hrs) < 0)
+                errors.ot_hrs = "OT hours must be a non-negative number.";
+            if (!form.time_windows[0])
+                errors.time_windows_0 = "Check-in is required.";
+            if (!form.time_windows[7])
+                errors.time_windows_7 = "Checkout is required.";
+            if (!hex.test(form.shiftcode_bg_color))
+                errors.shiftcode_bg_color =
+                    "Invalid hex color. Must be format: #RRGGBB";
+            if (!hex.test(form.shiftcode_font_color))
+                errors.shiftcode_font_color =
+                    "Invalid hex color. Must be format: #RRGGBB";
+            return errors;
+        },
+        onCreate: async (form) => {
+            await axios.post(route("shift-codes.store"), buildPayload(form));
+            toast.success("Shift code created successfully.");
+        },
+        onUpdate: async (target, form) => {
+            await axios.put(
+                route("shift-codes.update", { id: target.shift_code_id }),
+                buildPayload(form),
+            );
+            toast.success("Shift code updated successfully.");
+        },
+        onDelete: async (target) => {
             await axios.delete(
-                route("shift-codes.destroy", {
-                    id: deleteTarget.shift_code_id,
-                }),
+                route("shift-codes.destroy", { id: target.shift_code_id }),
             );
             toast.success("Shift code deleted successfully.");
-            setDeleteTarget(null);
-            const newPage = records.length === 1 && page > 1 ? page - 1 : page;
-            setPage(newPage);
-            fetchRecords(newPage);
-        } catch (e) {
-            toast.error(e.response?.data?.message ?? e.message);
-        } finally {
-            setDeleting(false);
-        }
+        },
+        afterSave: refresh,
+        afterDelete: pageAfterDelete,
+    });
+
+    function setTimeWindow(index, value) {
+        const updated = [...crud.form.time_windows];
+        updated[index] = value;
+        crud.setForm({ ...crud.form, time_windows: updated });
     }
 
-    const from =
-        meta.total === 0 ? 0 : (meta.current_page - 1) * meta.per_page + 1;
-    const to = Math.min(meta.current_page * meta.per_page, meta.total);
-
-    // Ensure records is always an array for rendering
-    const safeRecords = Array.isArray(records) ? records : [];
-
     // ── Render ────────────────────────────────────────────────────────────────
+    const safeRecords = Array.isArray(records) ? records : [];
 
     return (
         <AuthenticatedLayout>
             <div className="p-6 space-y-6 max-w-6xl mx-auto">
-                {/* ── Page header ── */}
-                <div className="flex items-center gap-3">
-                    <div className="p-2 rounded-lg bg-primary/10">
-                        <Clock className="h-6 w-6 text-primary" />
-                    </div>
-                    <div>
-                        <h1 className="text-2xl font-semibold tracking-tight">
-                            Shift Code Maintenance
-                        </h1>
-                        <p className="text-sm text-muted-foreground">
-                            Manage shift codes, schedules, and time windows.
-                        </p>
-                    </div>
-                </div>
+                <PageHeader
+                    icon={<Clock className="h-6 w-6 text-primary" />}
+                    title="Shift Code Maintenance"
+                    subtitle="Manage shift codes, schedules, and time windows."
+                />
 
-                {/* ── Card ── */}
                 <Card>
                     <CardHeader className="pb-4">
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -373,37 +194,14 @@ export default function ShiftCode() {
                                     {meta.total !== 1 ? "s" : ""}
                                 </CardDescription>
                             </div>
-
-                            <div className="flex flex-wrap items-center gap-2">
-                                <div className="relative">
-                                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                                    <Input
-                                        placeholder="Search..."
-                                        value={searchInput}
-                                        onChange={(e) =>
-                                            handleSearchInput(e.target.value)
-                                        }
-                                        className="pl-8 w-48"
-                                    />
-                                </div>
-                                <Button
-                                    variant="outline"
-                                    size="icon"
-                                    onClick={() => fetchRecords(page)}
-                                    disabled={loading}
-                                >
-                                    <RefreshCw
-                                        className={`h-4 w-4 ${loading ? "animate-spin" : ""}`}
-                                    />
-                                </Button>
-                                <Button
-                                    onClick={openCreate}
-                                    className="gap-1.5"
-                                >
-                                    <Plus className="h-4 w-4" />
-                                    Add Shift Code
-                                </Button>
-                            </div>
+                            <DataToolbar
+                                searchValue={searchInput}
+                                onSearchChange={handleSearchInput}
+                                loading={loading}
+                                onRefresh={refresh}
+                                addLabel="Add Shift Code"
+                                onAdd={crud.openCreate}
+                            />
                         </div>
                     </CardHeader>
 
@@ -425,7 +223,6 @@ export default function ShiftCode() {
                                     </TableHead>
                                 </TableRow>
                             </TableHeader>
-
                             <TableBody>
                                 {loading ? (
                                     <TableRow>
@@ -448,7 +245,7 @@ export default function ShiftCode() {
                                     </TableRow>
                                 ) : (
                                     safeRecords.map((r, idx) => (
-                                        <TableRow key={r.shift_code_id || idx}>
+                                        <TableRow key={r.shift_code_id ?? idx}>
                                             <TableCell className="pl-6 text-muted-foreground text-sm">
                                                 {from + idx}
                                             </TableCell>
@@ -488,7 +285,7 @@ export default function ShiftCode() {
                                                                     r.shiftcode_bg_color,
                                                                 ),
                                                         }}
-                                                        title={`BG: ${r.shiftcode_bg_color || "#FFFFFF"}`}
+                                                        title={`BG: ${r.shiftcode_bg_color ?? "#FFFFFF"}`}
                                                     />
                                                     <span
                                                         className="h-5 w-5 rounded border border-border"
@@ -498,7 +295,7 @@ export default function ShiftCode() {
                                                                     r.shiftcode_font_color,
                                                                 ),
                                                         }}
-                                                        title={`Font: ${r.shiftcode_font_color || "#000000"}`}
+                                                        title={`Font: ${r.shiftcode_font_color ?? "#000000"}`}
                                                     />
                                                 </div>
                                             </TableCell>
@@ -511,33 +308,19 @@ export default function ShiftCode() {
                                                             : "secondary"
                                                     }
                                                 >
-                                                    {r.shift_code_status ||
+                                                    {r.shift_code_status ??
                                                         "Inactive"}
                                                 </Badge>
                                             </TableCell>
                                             <TableCell className="text-right pr-6">
-                                                <div className="flex justify-end gap-1">
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="icon"
-                                                        className="h-8 w-8"
-                                                        onClick={() =>
-                                                            openEdit(r)
-                                                        }
-                                                    >
-                                                        <Pencil className="h-3.5 w-3.5" />
-                                                    </Button>
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="icon"
-                                                        className="h-8 w-8 text-destructive hover:text-destructive"
-                                                        onClick={() =>
-                                                            setDeleteTarget(r)
-                                                        }
-                                                    >
-                                                        <Trash2 className="h-3.5 w-3.5" />
-                                                    </Button>
-                                                </div>
+                                                <RowActions
+                                                    onEdit={() =>
+                                                        crud.openEdit(r)
+                                                    }
+                                                    onDelete={() =>
+                                                        crud.setDeleteTarget(r)
+                                                    }
+                                                />
                                             </TableCell>
                                         </TableRow>
                                     ))
@@ -545,78 +328,35 @@ export default function ShiftCode() {
                             </TableBody>
                         </Table>
 
-                        {/* ── Pagination ── */}
-                        {!loading && meta.total > 0 && (
-                            <div className="flex items-center justify-between px-6 py-3 border-t text-sm text-muted-foreground">
-                                <div className="flex items-center gap-2">
-                                    <span>Rows per page</span>
-                                    <Select
-                                        value={String(perPage)}
-                                        onValueChange={(v) => {
-                                            setPerPage(v);
-                                            setPage(1);
-                                        }}
-                                    >
-                                        <SelectTrigger className="h-8 w-16">
-                                            <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            {PER_PAGE_OPTIONS.map((o) => (
-                                                <SelectItem key={o} value={o}>
-                                                    {o}
-                                                </SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-                                <div className="flex items-center gap-4">
-                                    <span>
-                                        {from}–{to} of {meta.total}
-                                    </span>
-                                    <div className="flex items-center gap-1">
-                                        <Button
-                                            variant="outline"
-                                            size="icon"
-                                            className="h-8 w-8"
-                                            disabled={meta.current_page <= 1}
-                                            onClick={() =>
-                                                setPage((p) => p - 1)
-                                            }
-                                        >
-                                            <ChevronLeft className="h-4 w-4" />
-                                        </Button>
-                                        <Button
-                                            variant="outline"
-                                            size="icon"
-                                            className="h-8 w-8"
-                                            disabled={
-                                                meta.current_page >=
-                                                meta.last_page
-                                            }
-                                            onClick={() =>
-                                                setPage((p) => p + 1)
-                                            }
-                                        >
-                                            <ChevronRight className="h-4 w-4" />
-                                        </Button>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
+                        <PaginationFooter
+                            meta={meta}
+                            from={from}
+                            to={to}
+                            perPage={perPage}
+                            onPerPageChange={(v) => {
+                                setPerPage(v);
+                                setPage(1);
+                            }}
+                            onPrev={() => setPage((p) => p - 1)}
+                            onNext={() => setPage((p) => p + 1)}
+                        />
                     </CardContent>
                 </Card>
 
                 {/* ── Create / Edit Dialog ── */}
-                <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+                <Dialog
+                    open={crud.dialogOpen}
+                    onOpenChange={crud.setDialogOpen}
+                >
                     <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
                         <DialogHeader>
                             <DialogTitle>
-                                {editTarget
+                                {crud.editTarget
                                     ? "Edit Shift Code"
                                     : "Add Shift Code"}
                             </DialogTitle>
                             <DialogDescription>
-                                {editTarget
+                                {crud.editTarget
                                     ? "Update shift code details."
                                     : "Fill in the details to add a new shift code."}
                             </DialogDescription>
@@ -635,56 +375,37 @@ export default function ShiftCode() {
                                     <Input
                                         id="shiftcode"
                                         placeholder="e.g. DAY"
-                                        value={form.shiftcode}
+                                        value={crud.form.shiftcode}
                                         onChange={(e) =>
-                                            setForm({
-                                                ...form,
+                                            crud.setForm({
+                                                ...crud.form,
                                                 shiftcode:
                                                     e.target.value.toUpperCase(),
                                             })
                                         }
                                     />
-                                    {formErrors.shiftcode && (
+                                    {crud.formErrors.shiftcode && (
                                         <p className="text-xs text-destructive">
-                                            {formErrors.shiftcode}
+                                            {crud.formErrors.shiftcode}
                                         </p>
                                     )}
                                 </div>
 
                                 <div className="space-y-1.5">
                                     <Label>Background Color</Label>
-                                    <div className="flex items-center gap-2">
-                                        <input
-                                            type="color"
-                                            value={normalizeColor(
-                                                form.shiftcode_bg_color,
-                                            )}
-                                            onChange={(e) =>
-                                                setForm({
-                                                    ...form,
-                                                    shiftcode_bg_color:
-                                                        e.target.value,
-                                                })
-                                            }
-                                            className="h-9 w-9 cursor-pointer rounded border border-input bg-transparent p-0.5"
-                                        />
-                                        <Input
-                                            value={form.shiftcode_bg_color}
-                                            onChange={(e) =>
-                                                setForm({
-                                                    ...form,
-                                                    shiftcode_bg_color:
-                                                        e.target.value,
-                                                })
-                                            }
-                                            className="font-mono uppercase flex-1"
-                                            maxLength={7}
-                                            placeholder="#FFFFFF"
-                                        />
-                                    </div>
-                                    {formErrors.shiftcode_bg_color && (
+                                    <ColorInput
+                                        value={crud.form.shiftcode_bg_color}
+                                        onChange={(v) =>
+                                            crud.setForm({
+                                                ...crud.form,
+                                                shiftcode_bg_color: v,
+                                            })
+                                        }
+                                        placeholder="#FFFFFF"
+                                    />
+                                    {crud.formErrors.shiftcode_bg_color && (
                                         <p className="text-xs text-destructive">
-                                            {formErrors.shiftcode_bg_color}
+                                            {crud.formErrors.shiftcode_bg_color}
                                         </p>
                                     )}
                                 </div>
@@ -699,10 +420,10 @@ export default function ShiftCode() {
                                     <Input
                                         id="shiftcode_desc"
                                         placeholder="e.g. Day Shift"
-                                        value={form.shiftcode_desc}
+                                        value={crud.form.shiftcode_desc}
                                         onChange={(e) =>
-                                            setForm({
-                                                ...form,
+                                            crud.setForm({
+                                                ...crud.form,
                                                 shiftcode_desc: e.target.value,
                                             })
                                         }
@@ -711,38 +432,22 @@ export default function ShiftCode() {
 
                                 <div className="space-y-1.5">
                                     <Label>Font Color</Label>
-                                    <div className="flex items-center gap-2">
-                                        <input
-                                            type="color"
-                                            value={normalizeColor(
-                                                form.shiftcode_font_color,
-                                            )}
-                                            onChange={(e) =>
-                                                setForm({
-                                                    ...form,
-                                                    shiftcode_font_color:
-                                                        e.target.value,
-                                                })
-                                            }
-                                            className="h-9 w-9 cursor-pointer rounded border border-input bg-transparent p-0.5"
-                                        />
-                                        <Input
-                                            value={form.shiftcode_font_color}
-                                            onChange={(e) =>
-                                                setForm({
-                                                    ...form,
-                                                    shiftcode_font_color:
-                                                        e.target.value,
-                                                })
-                                            }
-                                            className="font-mono uppercase flex-1"
-                                            maxLength={7}
-                                            placeholder="#000000"
-                                        />
-                                    </div>
-                                    {formErrors.shiftcode_font_color && (
+                                    <ColorInput
+                                        value={crud.form.shiftcode_font_color}
+                                        onChange={(v) =>
+                                            crud.setForm({
+                                                ...crud.form,
+                                                shiftcode_font_color: v,
+                                            })
+                                        }
+                                        placeholder="#000000"
+                                    />
+                                    {crud.formErrors.shiftcode_font_color && (
                                         <p className="text-xs text-destructive">
-                                            {formErrors.shiftcode_font_color}
+                                            {
+                                                crud.formErrors
+                                                    .shiftcode_font_color
+                                            }
                                         </p>
                                     )}
                                 </div>
@@ -755,10 +460,10 @@ export default function ShiftCode() {
                                     <Input
                                         id="shift_group"
                                         placeholder="DEFAULT"
-                                        value={form.shift_group}
+                                        value={crud.form.shift_group}
                                         onChange={(e) =>
-                                            setForm({
-                                                ...form,
+                                            crud.setForm({
+                                                ...crud.form,
                                                 shift_group: e.target.value,
                                             })
                                         }
@@ -772,16 +477,18 @@ export default function ShiftCode() {
                                             className="text-sm font-bold tracking-wide"
                                             style={{
                                                 backgroundColor: normalizeColor(
-                                                    form.shiftcode_bg_color,
+                                                    crud.form
+                                                        .shiftcode_bg_color,
                                                 ),
                                                 color: normalizeColor(
-                                                    form.shiftcode_font_color,
+                                                    crud.form
+                                                        .shiftcode_font_color,
                                                 ),
                                                 padding: "2px 8px",
                                                 borderRadius: "4px",
                                             }}
                                         >
-                                            {form.shiftcode || "SAMPLE"}
+                                            {crud.form.shiftcode || "SAMPLE"}
                                         </span>
                                     </div>
                                 </div>
@@ -797,10 +504,10 @@ export default function ShiftCode() {
                                         </span>
                                     </Label>
                                     <Select
-                                        value={form.shift_code_status}
+                                        value={crud.form.shift_code_status}
                                         onValueChange={(v) =>
-                                            setForm({
-                                                ...form,
+                                            crud.setForm({
+                                                ...crud.form,
                                                 shift_code_status: v,
                                             })
                                         }
@@ -816,9 +523,9 @@ export default function ShiftCode() {
                                             ))}
                                         </SelectContent>
                                     </Select>
-                                    {formErrors.shift_code_status && (
+                                    {crud.formErrors.shift_code_status && (
                                         <p className="text-xs text-destructive">
-                                            {formErrors.shift_code_status}
+                                            {crud.formErrors.shift_code_status}
                                         </p>
                                     )}
                                 </div>
@@ -831,10 +538,10 @@ export default function ShiftCode() {
                                         step="0.5"
                                         min="0"
                                         placeholder="0"
-                                        value={form.ot_hrs}
+                                        value={crud.form.ot_hrs}
                                         onChange={(e) =>
-                                            setForm({
-                                                ...form,
+                                            crud.setForm({
+                                                ...crud.form,
                                                 ot_hrs: e.target.value,
                                             })
                                         }
@@ -842,9 +549,9 @@ export default function ShiftCode() {
                                     <p className="text-xs text-muted-foreground">
                                         Enter overtime hours (e.g., 1, 1.5, 2)
                                     </p>
-                                    {formErrors.ot_hrs && (
+                                    {crud.formErrors.ot_hrs && (
                                         <p className="text-xs text-destructive">
-                                            {formErrors.ot_hrs}
+                                            {crud.formErrors.ot_hrs}
                                         </p>
                                     )}
                                 </div>
@@ -853,12 +560,9 @@ export default function ShiftCode() {
                             {/* Shift Times */}
                             <Separator />
                             <div className="space-y-3">
-                                <div>
-                                    <p className="text-sm font-medium">
-                                        Shift Times
-                                    </p>
-                                </div>
-
+                                <p className="text-sm font-medium">
+                                    Shift Times
+                                </p>
                                 <div className="grid grid-cols-3 gap-x-4 gap-y-4">
                                     {TIME_WINDOW_FIELDS.map((field) => (
                                         <div
@@ -880,7 +584,7 @@ export default function ShiftCode() {
                                                 id={`tw_${field.index}`}
                                                 type="time"
                                                 value={
-                                                    form.time_windows[
+                                                    crud.form.time_windows[
                                                         field.index
                                                     ] ?? ""
                                                 }
@@ -891,12 +595,12 @@ export default function ShiftCode() {
                                                     )
                                                 }
                                             />
-                                            {formErrors[
+                                            {crud.formErrors[
                                                 `time_windows_${field.index}`
                                             ] && (
                                                 <p className="text-xs text-destructive">
                                                     {
-                                                        formErrors[
+                                                        crud.formErrors[
                                                             `time_windows_${field.index}`
                                                         ]
                                                     }
@@ -905,7 +609,6 @@ export default function ShiftCode() {
                                         </div>
                                     ))}
                                 </div>
-
                                 <p className="text-xs text-muted-foreground">
                                     Enter the shift times in order. Optional
                                     second break times can be left empty.
@@ -916,61 +619,103 @@ export default function ShiftCode() {
                         <DialogFooter className="gap-2">
                             <Button
                                 variant="outline"
-                                onClick={() => setDialogOpen(false)}
-                                disabled={saving}
+                                onClick={() => crud.setDialogOpen(false)}
+                                disabled={crud.saving}
                             >
                                 Cancel
                             </Button>
                             <Button
-                                onClick={handleSave}
-                                disabled={saving}
+                                onClick={crud.handleSave}
+                                disabled={crud.saving}
                                 className="gap-1.5"
                             >
-                                {saving && (
+                                {crud.saving && (
                                     <Loader2 className="h-4 w-4 animate-spin" />
                                 )}
-                                {editTarget ? "Save Changes" : "Add Shift Code"}
+                                {crud.editTarget
+                                    ? "Save Changes"
+                                    : "Add Shift Code"}
                             </Button>
                         </DialogFooter>
                     </DialogContent>
                 </Dialog>
 
                 {/* ── Delete Confirm ── */}
-                <AlertDialog
-                    open={!!deleteTarget}
-                    onOpenChange={(o) => !o && setDeleteTarget(null)}
-                >
-                    <AlertDialogContent>
-                        <AlertDialogHeader>
-                            <AlertDialogTitle>
-                                Delete Shift Code
-                            </AlertDialogTitle>
-                            <AlertDialogDescription>
-                                Are you sure you want to delete shift code{" "}
-                                <span className="font-semibold text-foreground">
-                                    {deleteTarget?.shiftcode}
-                                </span>
-                                ? This action cannot be undone.
-                            </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                            <AlertDialogCancel disabled={deleting}>
-                                Cancel
-                            </AlertDialogCancel>
-                            <AlertDialogAction
-                                onClick={handleDelete}
-                                disabled={deleting}
-                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90 gap-1.5"
-                            >
-                                {deleting && (
-                                    <Loader2 className="h-4 w-4 animate-spin" />
-                                )}
-                                Delete
-                            </AlertDialogAction>
-                        </AlertDialogFooter>
-                    </AlertDialogContent>
-                </AlertDialog>
+                <DeleteConfirmDialog
+                    open={!!crud.deleteTarget}
+                    onOpenChange={(o) => !o && crud.setDeleteTarget(null)}
+                    title="Delete Shift Code"
+                    description={
+                        <>
+                            Are you sure you want to delete shift code{" "}
+                            <span className="font-semibold text-foreground">
+                                {crud.deleteTarget?.shiftcode}
+                            </span>
+                            ? This action cannot be undone.
+                        </>
+                    }
+                    onConfirm={crud.handleDelete}
+                    isDeleting={crud.deleting}
+                />
             </div>
         </AuthenticatedLayout>
+    );
+}
+
+// ─── Local helpers ────────────────────────────────────────────────────────────
+
+function buildPayload(form) {
+    return {
+        ...form,
+        ot_hrs: Number(form.ot_hrs),
+        shiftcode_bg_color: form.shiftcode_bg_color.startsWith("#")
+            ? form.shiftcode_bg_color
+            : `#${form.shiftcode_bg_color}`,
+        shiftcode_font_color: form.shiftcode_font_color.startsWith("#")
+            ? form.shiftcode_font_color
+            : `#${form.shiftcode_font_color}`,
+    };
+}
+
+function ColorInput({ value, onChange, placeholder }) {
+    return (
+        <div className="flex items-center gap-2">
+            <input
+                type="color"
+                value={normalizeColor(value)}
+                onChange={(e) => onChange(e.target.value)}
+                className="h-9 w-9 cursor-pointer rounded border border-input bg-transparent p-0.5"
+            />
+            <Input
+                value={value}
+                onChange={(e) => onChange(e.target.value)}
+                className="font-mono uppercase flex-1"
+                maxLength={7}
+                placeholder={placeholder}
+            />
+        </div>
+    );
+}
+
+function RowActions({ onEdit, onDelete }) {
+    return (
+        <div className="flex justify-end gap-1">
+            <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={onEdit}
+            >
+                <Pencil className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 text-destructive hover:text-destructive"
+                onClick={onDelete}
+            >
+                <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+        </div>
     );
 }
