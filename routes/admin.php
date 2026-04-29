@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\HolidayController;
 use App\Http\Controllers\PayrollCutoffScheduleController;
+use App\Http\Controllers\ShiftCodeController;
 use Illuminate\Support\Facades\Route;
 
 
@@ -23,4 +24,14 @@ Route::prefix('payroll-cutoff-schedules')->name('payroll-cutoff-schedules.')->gr
     Route::post('/',       [PayrollCutoffScheduleController::class, 'store'])->name('store');
     Route::put('/{id}',    [PayrollCutoffScheduleController::class, 'update'])->name('update');
     Route::delete('/{id}', [PayrollCutoffScheduleController::class, 'destroy'])->name('destroy');
+});
+
+Route::get('/admin/shift-codes', [ShiftCodeController::class, 'page'])->name('shift-codes.page');
+
+Route::prefix('shift-codes')->name('shift-codes.')->group(function () {
+    Route::get('/',        [ShiftCodeController::class, 'index'])->name('index');
+    Route::get('/{id}',    [ShiftCodeController::class, 'show'])->name('show');
+    Route::post('/',       [ShiftCodeController::class, 'store'])->name('store');
+    Route::put('/{id}',    [ShiftCodeController::class, 'update'])->name('update');
+    Route::delete('/{id}', [ShiftCodeController::class, 'destroy'])->name('destroy');
 });
