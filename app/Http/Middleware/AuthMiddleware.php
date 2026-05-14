@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Services\HrisApiService;
 use App\Services\SystemStatusService;
 use Closure;
 use Illuminate\Http\Request;
@@ -13,7 +14,8 @@ use Inertia\Inertia;
 class AuthMiddleware
 {
     public function __construct(
-        protected SystemStatusService $systemStatusService
+        protected SystemStatusService $systemStatusService,
+        protected HrisApiService $hrisApiService,
     ) {}
 
     public function handle(Request $request, Closure $next)
@@ -108,6 +110,8 @@ class AuthMiddleware
 
 
         // 🔹 Set session — IDs only, names resolved via HRIS Lookup API
+        $directReports = $this->hrisApiService->fetchDirectReports((int) $userId);
+
         session(['emp_data' => [
             'token'          => $currentUser->token,
             'emp_id'         => $currentUser->emp_id,
@@ -122,6 +126,7 @@ class AuthMiddleware
             'team'             => $currentUser->team ?? null,
             'emp_system_role' => $role ?? null,
             'generated_at'   => $currentUser->generated_at,
+            'has_direct_reports' => !empty($directReports),
         ]]);
 
         session()->save();

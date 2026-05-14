@@ -18,6 +18,7 @@ export default function NavLinks({ isSidebarOpen }) {
 
     const userRole = emp_data?.emp_system_role || "user";
     const isHrAdmin = userRole === "hr_admin";
+    const hasDirectReports = emp_data?.has_direct_reports ?? false;
 
     return (
         <nav
@@ -56,7 +57,7 @@ export default function NavLinks({ isSidebarOpen }) {
                     ]}
                 />
             )}
-            {!isHrAdmin && (
+            {!isHrAdmin && hasDirectReports && (
                 <SidebarLink
                     href={route("workschedule.template")}
                     label="Create Work Schedule"
