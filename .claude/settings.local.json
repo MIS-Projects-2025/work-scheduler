@@ -8,7 +8,8 @@
       "Bash(php -l app/Repositories/WorkScheduleRepository.php)",
       "Bash(grep -E \"\\\\.\\(js|jsx\\)$\")",
       "Bash(grep -E \"\\\\.jsx$\")",
-      "Bash(php artisan:*)"
+      "Bash(php artisan:*)",
+      "Bash(xargs basename:*)"
     ]
   }
 }
