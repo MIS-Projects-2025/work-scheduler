@@ -5,9 +5,9 @@ import {
     DialogContent,
     DialogHeader,
     DialogTitle,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+} from "@/Components/ui/dialog";
+import { Button } from "@/Components/ui/button";
+import { Input } from "@/Components/ui/input";
 import { Badge } from "@/Components/ui/badge";
 import {
     Select,
@@ -15,7 +15,7 @@ import {
     SelectItem,
     SelectTrigger,
     SelectValue,
-} from "@/components/ui/select";
+} from "@/Components/ui/select";
 import { Loader2, Clock, User, FileText, RefreshCw, Download, Search } from "lucide-react";
 import dayjs from "dayjs";
 import ServerTable from "@/Components/ServerTable";

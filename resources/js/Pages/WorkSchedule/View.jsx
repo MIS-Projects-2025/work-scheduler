@@ -10,9 +10,9 @@ import {
     Clock,
     Download,
 } from "lucide-react";
-import { Card, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Card, CardContent } from "@/Components/ui/card";
+import { Button } from "@/Components/ui/button";
+import { Input } from "@/Components/ui/input";
 import BulkActionBar from "./components/BulkActionBar";
 import {
     Select,
@@ -20,7 +20,7 @@ import {
     SelectItem,
     SelectTrigger,
     SelectValue,
-} from "@/components/ui/select";
+} from "@/Components/ui/select";
 import { Pagination } from "@/Components/Pagination";
 import ScheduleTableViewing from "./ScheduleTableViewing";
 import ShiftLegend from "./components/ShiftLegend";

@@ -5,11 +5,11 @@ import {
     DialogFooter,
     DialogHeader,
     DialogTitle,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
+} from "@/Components/ui/dialog";
+import { Button } from "@/Components/ui/button";
+import { Label } from "@/Components/ui/label";
 import { Badge } from "@/Components/ui/badge";
-import { Combobox } from "@/components/ui/combobox";
+import { Combobox } from "@/Components/ui/combobox";
 
 /**
  * Dialog that pops when the user double-clicks an editable shift-code cell.

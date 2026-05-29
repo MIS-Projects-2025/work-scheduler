@@ -4,9 +4,9 @@ import {
     DialogFooter,
     DialogHeader,
     DialogTitle,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+} from "@/Components/ui/dialog";
+import { Button } from "@/Components/ui/button";
+import { Alert, AlertDescription } from "@/Components/ui/alert";
 import { CheckCircle, AlertCircle, XCircle } from "lucide-react";
 
 export default function ResultModal({ open, onClose, result }) {

@@ -1,11 +1,11 @@
-import { Button } from "@/components/ui/button";
-import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
+import { Button } from "@/Components/ui/button";
+import { Table, TableBody, TableCell, TableRow } from "@/Components/ui/table";
 import {
     Tooltip,
     TooltipContent,
     TooltipProvider,
     TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@/Components/ui/tooltip";
 import { ChevronDown, ChevronUp } from "lucide-react";
 
 export default function ShiftLegend({ shifts, shiftMap, collapsed, onToggle }) {

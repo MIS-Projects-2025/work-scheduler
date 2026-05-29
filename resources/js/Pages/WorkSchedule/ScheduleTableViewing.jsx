@@ -6,14 +6,14 @@ import {
     TableHeader,
     TableRow,
     TableCell,
-} from "@/components/ui/table";
+} from "@/Components/ui/table";
 import { Badge } from "@/Components/ui/badge";
 import {
     Tooltip,
     TooltipContent,
     TooltipProvider,
     TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@/Components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { useCellEdit } from "./hooks/useCellEdit";
 import CellEditDialog from "./components/CellEditDialog";

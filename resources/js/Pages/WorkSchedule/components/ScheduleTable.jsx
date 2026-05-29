@@ -1,5 +1,5 @@
 import { Eye } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@/Components/ui/button";
 import { Badge } from "@/Components/ui/badge";
 import ServerTable from "@/Components/ServerTable";
 import { SCHEDULE_STATUS } from "../helpers/scheduleHelpers";
